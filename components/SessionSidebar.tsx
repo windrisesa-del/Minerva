@@ -83,6 +83,12 @@ function ToolbarIconButton({
 interface Props {
   selectedSessionId: string | null;
   onSelectSession: (session: SessionInfo, isRestore?: boolean) => void;
+  studentCenterActive?: boolean;
+  onOpenStudentCenter?: () => void;
+  assignmentCenterActive?: boolean;
+  onOpenAssignmentCenter?: () => void;
+  workbenchActiveAssignmentId?: string | null;
+  onOpenAssignmentWorkbench?: (assignmentId: string) => void;
   onNewSession?: (sessionId: string, cwd: string) => void;
   initialSessionId?: string | null;
   skipInitialProjectSelection?: boolean;
@@ -105,6 +111,16 @@ interface Props {
   onBackgroundTaskDone?: () => void;
   onRunningSessionIdsChange?: (ids: Set<string>) => void;
   onSessionsChange?: (sessions: SessionInfo[]) => void;
+  /** Fired once the first session-catalog request settles, including errors. */
+  onInitialLoadComplete?: (sessions: SessionInfo[]) => void;
+}
+
+interface AssignmentWorkbenchSummary {
+  assignmentId: string;
+  displayTitle: string;
+  sessionCount: number;
+  running: boolean;
+  failed: boolean;
 }
 
 interface WorktreeEntry {
@@ -313,7 +329,7 @@ function PiWebTitle() {
   const [scrambling, setScrambling] = useState(false);
   const revertTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const target = showVersion ? `${process.env.NEXT_PUBLIC_APP_VERSION ?? "0.0.0"}p${process.env.NEXT_PUBLIC_PI_VERSION ?? "0.0.0"}` : "Pi Web";
+  const target = showVersion ? `${process.env.NEXT_PUBLIC_APP_VERSION ?? "0.0.0"}p${process.env.NEXT_PUBLIC_PI_VERSION ?? "0.0.0"}` : "Minerva";
   const display = useScramble(target, scrambling);
 
   const triggerScramble = useCallback((toVersion: boolean) => {
@@ -337,6 +353,7 @@ function PiWebTitle() {
 
   return (
     <button
+      className="minerva-brand-button"
       onClick={handleClick}
       style={{
         background: "none", border: "none", padding: 0, cursor: "default",
@@ -351,9 +368,11 @@ function PiWebTitle() {
   );
 }
 
-export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSession, initialSessionId, skipInitialProjectSelection, onInitialRestoreDone, refreshKey, onSessionDeleted, selectedCwd: selectedCwdProp, onCwdChange, onOpenFile, explorerRefreshKey, onExplorerRefresh, onAtMention, onAtMentions, onBackgroundTaskDone, onRunningSessionIdsChange, onSessionsChange }: Props) {
+export function SessionSidebar({ selectedSessionId, onSelectSession, studentCenterActive = false, onOpenStudentCenter, assignmentCenterActive = false, onOpenAssignmentCenter, workbenchActiveAssignmentId = null, onOpenAssignmentWorkbench, onNewSession, initialSessionId, skipInitialProjectSelection, onInitialRestoreDone, refreshKey, onSessionDeleted, selectedCwd: selectedCwdProp, onCwdChange, onOpenFile, explorerRefreshKey, onExplorerRefresh, onAtMention, onAtMentions, onBackgroundTaskDone, onRunningSessionIdsChange, onSessionsChange, onInitialLoadComplete }: Props) {
   const { t } = useI18n();
   const [allSessions, setAllSessions] = useState<SessionInfo[]>([]);
+  const [assignmentWorkbenches, setAssignmentWorkbenches] = useState<AssignmentWorkbenchSummary[]>([]);
+  const [workbenchOpen, setWorkbenchOpen] = useState(true);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedCwd, setSelectedCwd] = useState<string | null>(null);
@@ -399,6 +418,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   const fileExplorerRef = useRef<FileExplorerHandle>(null);
 
   const loadSessions = useCallback(async (showLoading = false, force = false) => {
+    let loadedSessions: SessionInfo[] | null = null;
     try {
       if (showLoading) setLoading(true);
       const res = await fetch(force ? "/api/sessions?force=1" : "/api/sessions", {
@@ -410,6 +430,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
         runningSessionIds?: string[];
         completionNotificationSuppressedSessionIds?: string[];
       };
+      loadedSessions = data.sessions;
       setAllSessions(data.sessions);
       // Treat the fetched running set as an initial fallback only. Once the
       // lightweight poll is live, a slow session-list fetch cannot overwrite it.
@@ -440,8 +461,29 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     } catch (e) {
       setError(String(e));
     } finally {
-      if (showLoading) setLoading(false);
+      if (showLoading) {
+        setLoading(false);
+        onInitialLoadComplete?.(loadedSessions ?? []);
+      }
     }
+  }, [onInitialLoadComplete]);
+
+  useEffect(() => {
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const load = async () => {
+      try {
+        const response = await fetch("/api/assignment-workbench", { cache: "no-store" });
+        const body = await response.json() as { workbenches?: AssignmentWorkbenchSummary[] };
+        if (response.ok && !cancelled) setAssignmentWorkbenches(body.workbenches ?? []);
+      } catch {
+        // Keep the latest successful list; the next poll retries.
+      } finally {
+        if (!cancelled) timer = setTimeout(load, 5000);
+      }
+    };
+    void load();
+    return () => { cancelled = true; clearTimeout(timer); };
   }, []);
 
   const initialLoadDone = useRef(false);
@@ -918,8 +960,8 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   );
 
   const filteredSessions = selectedProject
-    ? sessionsForProject(allSessions, selectedProject.key)
-    : allSessions;
+    ? sessionsForProject(allSessions, selectedProject.key).filter((session) => !session.minervaInternal)
+    : allSessions.filter((session) => !session.minervaInternal);
   const showWorktreeSwitcher = Boolean(
     worktreeState?.isGit
     && worktreeState.isTopLevel
@@ -952,7 +994,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   const sessionFamilies = listSessionFamilies(filteredSessions);
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
+    <div className="minerva-sidebar-content" style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
       {customPathOpen && (
         <DirectoryPicker
           initialPath={customPathValue}
@@ -967,6 +1009,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
       )}
       {/* Header */}
       <div
+        className="minerva-sidebar-header"
         style={{
           padding: "12px 10px 10px",
           borderBottom: "1px solid var(--border)",
@@ -985,11 +1028,11 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                 border: "1px solid var(--border)",
                 color: selectedCwd ? "var(--text-muted)" : "var(--text-dim)",
                 cursor: selectedCwd ? "pointer" : "not-allowed",
-                height: 32,
+                 height: 34,
                 paddingLeft: 10,
                 paddingRight: 12,
                 borderRadius: 7,
-                fontSize: 12,
+                 fontSize: 13,
                 fontWeight: 500,
                 letterSpacing: "-0.01em",
                 flexShrink: 0,
@@ -1000,7 +1043,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                 if (!selectedCwd) return;
                 e.currentTarget.style.background = "var(--bg-selected)";
                 e.currentTarget.style.color = "var(--accent)";
-                e.currentTarget.style.borderColor = "rgba(37,99,235,0.35)";
+                e.currentTarget.style.borderColor = "color-mix(in srgb, var(--accent) 35%, var(--border))";
               }}
               onMouseLeave={(e) => {
                 e.currentTarget.style.background = "var(--bg-hover)";
@@ -1022,7 +1065,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                 border: `1px solid ${sessionRefreshDone ? "rgba(74,222,128,0.4)" : "var(--border)"}`,
                 color: sessionRefreshDone ? "#4ade80" : "var(--text-muted)",
                 cursor: "pointer",
-                width: 32, height: 32,
+                 width: 34, height: 34,
                 borderRadius: 7,
                 padding: 0,
                 flexShrink: 0,
@@ -1032,7 +1075,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                 if (sessionRefreshDone) return;
                 e.currentTarget.style.background = "var(--bg-selected)";
                 e.currentTarget.style.color = "var(--accent)";
-                e.currentTarget.style.borderColor = "rgba(37,99,235,0.35)";
+                e.currentTarget.style.borderColor = "color-mix(in srgb, var(--accent) 35%, var(--border))";
               }}
               onMouseLeave={(e) => {
                 if (sessionRefreshDone) return;
@@ -1066,11 +1109,11 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
               display: "flex",
               alignItems: "center",
               padding: "6px 10px",
-              background: selectedCwd ? "var(--bg-hover)" : "rgba(37,99,235,0.06)",
-              border: selectedCwd ? "1px solid var(--border)" : "1px solid rgba(37,99,235,0.4)",
+              background: selectedCwd ? "var(--bg-hover)" : "color-mix(in srgb, var(--accent) 7%, var(--bg-panel))",
+              border: selectedCwd ? "1px solid var(--border)" : "1px solid color-mix(in srgb, var(--accent) 38%, var(--border))",
               borderRadius: 7,
               cursor: "pointer",
-              fontSize: 12,
+               fontSize: 13,
               color: "var(--text)",
               textAlign: "left",
               transition: "border-color 0.15s, background 0.15s",
@@ -1082,7 +1125,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                 style={{
                   flex: 1,
                   fontFamily: "var(--font-mono)",
-                  fontSize: 11,
+                   fontSize: 12,
                   color: "var(--text)",
                 }}
               />
@@ -1094,7 +1137,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                   textOverflow: "ellipsis",
                   whiteSpace: "nowrap",
                   fontFamily: "var(--font-mono)",
-                  fontSize: 11,
+                   fontSize: 12,
                   color: "var(--text-dim)",
                 }}
               >
@@ -1614,20 +1657,82 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
         )}
       </div>
 
+      <button
+        type="button"
+        className="minerva-student-entry"
+        aria-current={studentCenterActive ? "page" : undefined}
+        onClick={onOpenStudentCenter}
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <circle cx="9" cy="8" r="3" />
+          <path d="M3.5 19c.5-3.2 2.3-5 5.5-5s5 1.8 5.5 5" />
+          <circle cx="17" cy="9" r="2.2" />
+          <path d="M15.5 14.5c2.9-.4 4.6 1 5 3.5" />
+        </svg>
+        <span>学生中心</span>
+      </button>
+
+      <button
+        type="button"
+        className="minerva-student-entry minerva-assignment-entry"
+        aria-current={assignmentCenterActive ? "page" : undefined}
+        onClick={onOpenAssignmentCenter}
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M7 3h7l4 4v14H7z" />
+          <path d="M14 3v5h4M10 12h5M10 16h5" />
+        </svg>
+        <span>学生作业</span>
+      </button>
+
+      <div className="minerva-workbench-nav">
+        <button
+          type="button"
+          className="minerva-student-entry minerva-workbench-entry"
+          aria-expanded={workbenchOpen}
+          onClick={() => setWorkbenchOpen((open) => !open)}
+        >
+          <svg className="minerva-workbench-chevron" data-open={workbenchOpen ? "true" : "false"} width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="m9 18 6-6-6-6" />
+          </svg>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <rect x="4" y="4" width="16" height="16" rx="2" />
+            <path d="M8 9h8M8 13h8M8 17h5" />
+          </svg>
+          <span>批改工作台</span>
+          {assignmentWorkbenches.length > 0 && <small>{assignmentWorkbenches.length}</small>}
+        </button>
+        {workbenchOpen && <div className="minerva-workbench-list">
+          {assignmentWorkbenches.length === 0 ? <p>暂无处理记录</p> : assignmentWorkbenches.map((workbench) => (
+            <button
+              type="button"
+              key={workbench.assignmentId}
+              className={workbench.assignmentId === workbenchActiveAssignmentId ? "is-active" : ""}
+              onClick={() => onOpenAssignmentWorkbench?.(workbench.assignmentId)}
+              title={workbench.displayTitle}
+            >
+              <i className={workbench.running ? "is-running" : workbench.failed ? "is-failed" : "is-completed"} />
+              <span>{workbench.displayTitle}</span>
+              <small>{workbench.running ? "处理中" : workbench.failed ? "已中断" : `${workbench.sessionCount} 段`}</small>
+            </button>
+          ))}
+        </div>}
+      </div>
+
       {/* Session list */}
       <div style={{ flex: explorerOpen && (selectedCwdProp || selectedCwd) ? "1 1 0" : "1 1 auto", overflowY: "auto", padding: "0", minHeight: 80 }}>
         {loading && (
-          <div style={{ padding: "16px 14px", color: "var(--text-muted)", fontSize: 12 }}>
+          <div style={{ padding: "16px 14px", color: "var(--text-muted)", fontSize: 13 }}>
             {t("sidebar.loading")}
           </div>
         )}
         {error && (
-          <div style={{ padding: "12px 14px", color: "#f87171", fontSize: 12 }}>
+          <div style={{ padding: "12px 14px", color: "#f87171", fontSize: 13 }}>
             {error}
           </div>
         )}
         {!loading && !error && sessionFamilies.length === 0 && (
-          <div style={{ padding: "16px 14px", color: "var(--text-muted)", fontSize: 12 }}>
+          <div style={{ padding: "16px 14px", color: "var(--text-muted)", fontSize: 13 }}>
             {t("sidebar.noSessions")}
           </div>
         )}
@@ -1683,7 +1788,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                 border: "none",
                 color: "var(--text-muted)",
                 cursor: "pointer",
-                fontSize: 11,
+                 fontSize: 12,
                 fontWeight: 600,
                 letterSpacing: "0.05em",
                 textTransform: "uppercase",
@@ -2021,10 +2126,12 @@ function SessionItem({
   }, [onRenamed, session.cwd, session.id, session.name, session.path]);
 
   // Fixed-height outer wrapper — content swaps in place so the list never reflows
-  const ITEM_HEIGHT = 54;
+  const ITEM_HEIGHT = 60;
 
   return (
     <div
+      className="minerva-session-item"
+      data-selected={isSelected ? "true" : "false"}
       onClick={confirmDelete || renaming ? undefined : onClick}
       onContextMenu={confirmDelete || renaming ? undefined : handleContextMenu}
       onMouseEnter={() => setHovered(true)}
@@ -2123,17 +2230,18 @@ function SessionItem({
               <path d="M9 11h.01M15 11h.01M9 15h6M12 7V4M10 4h4" />
             </svg>
           )}
-          <div style={{ flex: 1, minWidth: 0 }}>
+          <div className="minerva-session-copy" style={{ flex: 1, minWidth: 0 }}>
             <div
               style={{
                 display: "flex",
                 alignItems: "center",
                 gap: 5,
                 minWidth: 0,
-                fontSize: 12,
-                fontWeight: isSelected ? 500 : 400,
-                lineHeight: 1.4,
-                color: "var(--text)",
+                 fontSize: 14,
+                 fontWeight: isSelected ? 600 : 500,
+                 lineHeight: 1.35,
+                 color: "var(--text)",
+                 letterSpacing: "-0.012em",
               }}
               title={title}
             >
@@ -2141,7 +2249,7 @@ function SessionItem({
                 {title}
               </span>
             </div>
-            <div style={{ marginTop: 2, display: "flex", alignItems: "center", gap: 8, color: "var(--text-dim)", fontSize: 11, minWidth: 0 }}>
+            <div style={{ marginTop: 4, display: "flex", alignItems: "center", gap: 8, color: "var(--text-dim)", fontSize: 12, minWidth: 0, lineHeight: 1.25 }}>
               {isRunning ? (
                 <RunningSessionIndicator />
               ) : isUnread ? (
@@ -2204,7 +2312,7 @@ function SessionItem({
                 onMouseEnter={(e) => {
                   e.currentTarget.style.background = "var(--bg-selected)";
                   e.currentTarget.style.color = "var(--accent)";
-                  e.currentTarget.style.borderColor = "rgba(37,99,235,0.35)";
+                  e.currentTarget.style.borderColor = "color-mix(in srgb, var(--accent) 35%, var(--border))";
                 }}
                 onMouseLeave={(e) => {
                   e.currentTarget.style.background = "var(--bg-hover)";

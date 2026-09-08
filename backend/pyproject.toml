@@ -1,0 +1,25 @@
+[project]
+name = "minerva-data-api"
+version = "0.1.0"
+description = "PostgreSQL-backed data API for Minerva"
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi>=0.116,<1",
+  "pillow>=11,<13",
+  "python-multipart>=0.0.9,<1",
+  "python-docx>=1.2,<2",
+  "pymupdf>=1.26,<2",
+  "psycopg[binary]>=3.2,<4",
+  "sqlalchemy>=2.0,<3",
+  "uvicorn[standard]>=0.35,<1",
+]
+
+[dependency-groups]
+dev = [
+  "httpx>=0.28,<1",
+  "pytest>=8.4,<9",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

@@ -9,17 +9,26 @@ import {
   getRpcSessionInfos,
   getRunningRpcSessionIds,
 } from "@/lib/rpc-manager";
+import { reconcileInterruptedEvaluatorRuns } from "@/lib/minerva-evaluator-recovery";
+import { readAssignmentWorkbenches } from "@/lib/assignment-workbench-store";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(req: Request) {
   try {
+    void reconcileInterruptedEvaluatorRuns().catch((error) => {
+      console.error("[minerva] failed to reconcile interrupted evaluator runs:", error);
+    });
     const force = new URL(req.url).searchParams.get("force") === "1";
-    const [persistedSessions, runtimeSessions] = await Promise.all([
+    const [persistedSessions, runtimeSessions, workbenches] = await Promise.all([
       listAllSessions({ force }),
       attachSessionProjectInfo(getRpcSessionInfos()),
+      readAssignmentWorkbenches().catch(() => []),
     ]);
-    const sessions = mergeSessionLists(persistedSessions, runtimeSessions);
+    const internalSessionIds = new Set(workbenches.flatMap((workbench) => workbench.sessions.map((session) => session.sessionId)));
+    const sessions = mergeSessionLists(persistedSessions, runtimeSessions).map((session) => (
+      internalSessionIds.has(session.id) ? { ...session, minervaInternal: true } : session
+    ));
     return NextResponse.json(
       {
         sessions,

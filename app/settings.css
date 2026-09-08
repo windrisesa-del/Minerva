@@ -407,8 +407,8 @@
 }
 
 .config-scope-tag.is-project {
-  background: rgba(99, 102, 241, 0.12);
-  color: rgba(99, 102, 241, 0.8);
+  background: color-mix(in srgb, var(--accent-teal) 14%, transparent);
+  color: var(--accent-teal);
 }
 
 .config-trust-notice {
@@ -884,6 +884,17 @@
   min-height: 0;
 }
 
+.settings-inspect-empty {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  padding: 24px;
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1.5;
+  text-align: center;
+}
+
 .settings-general {
   width: 100%;
   max-width: 680px;
@@ -1106,6 +1117,123 @@
     background: var(--bg-panel);
     color: var(--text);
     font-size: 16px;
+  }
+}
+
+/* Minerva warm-editorial product surfaces. */
+.config-panel-root.is-modal,
+.settings-dialog-backdrop {
+  background: color-mix(in srgb, var(--surface-dark) 46%, transparent);
+  backdrop-filter: blur(9px) saturate(88%);
+}
+
+.config-panel-root.is-modal > .config-panel-surface,
+.settings-dialog-surface {
+  overflow: hidden;
+  border-color: color-mix(in srgb, var(--border) 88%, var(--accent));
+  border-radius: 16px;
+  background: var(--surface-elevated);
+  box-shadow: var(--shadow-float);
+}
+
+.config-panel-header,
+.settings-dialog-header {
+  min-height: 56px;
+  border-bottom-color: color-mix(in srgb, var(--border) 86%, transparent);
+  background: color-mix(in srgb, var(--bg-panel) 82%, var(--surface-elevated));
+}
+
+.config-panel-title,
+.settings-dialog-title,
+.settings-general-heading,
+.settings-general-title {
+  font-family: var(--font-display);
+  font-weight: 500;
+  letter-spacing: -0.02em;
+}
+
+.config-panel-title,
+.settings-dialog-title {
+  font-size: 19px;
+}
+
+.config-sidebar,
+.settings-section-tabs {
+  background: color-mix(in srgb, var(--bg-panel) 92%, var(--bg));
+}
+
+.config-sidebar-list,
+.settings-section-tabs {
+  padding: 12px 9px;
+}
+
+.config-sidebar-group-label {
+  padding-top: 10px;
+  color: var(--text-dim);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+}
+
+.config-sidebar-item,
+.settings-section-tab,
+.settings-theme-option,
+.settings-language-option {
+  min-height: 36px;
+  border-radius: 8px;
+}
+
+.config-sidebar-item[aria-current="page"],
+.settings-section-tab[aria-selected="true"],
+.settings-theme-option[aria-checked="true"],
+.settings-language-option[aria-checked="true"] {
+  background: var(--bg-selected);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.config-detail-title,
+.config-section-title {
+  font-family: var(--font-display);
+  font-weight: 500;
+  letter-spacing: -0.015em;
+}
+
+.config-panel-root input,
+.config-panel-root textarea,
+.config-panel-root select,
+.settings-dialog-surface input,
+.settings-dialog-surface textarea,
+.settings-dialog-surface select {
+  border-color: var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.config-panel-root input:focus,
+.config-panel-root textarea:focus,
+.config-panel-root select:focus,
+.settings-dialog-surface input:focus,
+.settings-dialog-surface textarea:focus,
+.settings-dialog-surface select:focus {
+  border-color: var(--accent);
+  outline: 3px solid color-mix(in srgb, var(--accent) 13%, transparent);
+  outline-offset: 0;
+}
+
+.config-close-button,
+.settings-dialog-close {
+  border-radius: 50%;
+}
+
+.agents-feature-setting,
+.settings-general-section {
+  background: color-mix(in srgb, var(--bg-panel) 54%, var(--surface-elevated));
+}
+
+@media (max-width: 640px) {
+  .config-panel-root.is-modal > .config-panel-surface,
+  .settings-dialog-surface {
+    border-radius: 0;
   }
 }
 

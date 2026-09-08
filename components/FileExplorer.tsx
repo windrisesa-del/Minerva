@@ -122,7 +122,7 @@ const GIT_STATUS_COLORS: Record<GitFileStatusKind, string> = {
   modified: "#d6a84b",
   added: "#4ade80",
   deleted: "#f87171",
-  renamed: "#60a5fa",
+  renamed: "var(--accent-teal)",
   untracked: "#4ade80",
   conflict: "#f87171",
 };
@@ -336,7 +336,7 @@ function TreeNode({
             aria-label={t("files.newlyUploaded")}
             style={{ width: 14, height: 14, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}
           >
-            <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#3b82f6" }} />
+            <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--accent-teal)" }} />
           </span>
         )}
         {!hovered && !node.isDir && gitStatus && (

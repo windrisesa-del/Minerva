@@ -649,9 +649,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     }
   }, [isNew, newSessionCwd, toolPreset]);
 
-  // Opening the System or Tools panel may initialize an otherwise dormant
-  // session. This is deliberately a non-prompt command: it creates no message
-  // or model run, but lets users inspect the exact prompt before sending one.
+  // Opening the System or Tools settings section may initialize an otherwise
+  // dormant session. This is deliberately a non-prompt command: it creates no
+  // message or model run, but lets users inspect the exact prompt before sending one.
   const loadSystemInfo = useCallback(async () => {
     const sid = sessionIdRef.current ?? await ensureNewSession();
     if (!sid) return;

@@ -1,9 +1,12 @@
 import type { Metadata, Viewport } from "next";
-import { Noto_Sans_Mono } from "next/font/google";
+import { Noto_Sans_Mono, Noto_Sans_SC, Source_Sans_3 } from "next/font/google";
 import { PwaRegistration } from "@/components/PwaRegistration";
 import "katex/dist/katex.min.css";
 import "./globals.css";
 import "./settings.css";
+import "./student-center.css";
+import "./student-assignments.css";
+import "./startup-splash.css";
 
 const notoSansMono = Noto_Sans_Mono({
   subsets: ["latin", "cyrillic"],
@@ -11,10 +14,23 @@ const notoSansMono = Noto_Sans_Mono({
   display: "swap",
 });
 
+const sourceSans = Source_Sans_3({
+  subsets: ["latin"],
+  variable: "--font-source-sans",
+  display: "swap",
+});
+
+const notoSansSc = Noto_Sans_SC({
+  weight: "variable",
+  variable: "--font-noto-sans-sc",
+  display: "swap",
+  preload: false,
+});
+
 export const metadata: Metadata = {
-  title: "Pi Web",
-  description: "Pi Web interface for the pi coding agent",
-  applicationName: "Pi Web",
+  title: "Minerva",
+  description: "Minerva teacher assistant",
+  applicationName: "Minerva",
   manifest: "/manifest.webmanifest",
   icons: {
     icon: [
@@ -35,7 +51,7 @@ export const metadata: Metadata = {
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",
-    title: "Pi Web",
+    title: "Minerva",
   },
   formatDetection: {
     telephone: false,
@@ -59,12 +75,12 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" translate="no" className={`${notoSansMono.variable} notranslate`} suppressHydrationWarning>
+    <html lang="en" translate="no" className={`${sourceSans.variable} ${notoSansSc.variable} ${notoSansMono.variable} notranslate`} suppressHydrationWarning>
       <head>
         <meta name="google" content="notranslate" />
         <script
           dangerouslySetInnerHTML={{
-            __html: `(function(){try{var t=localStorage.getItem("pi-theme");var dark=t==="dark"||((t==null||t===""||t==="auto")&&window.matchMedia("(prefers-color-scheme: dark)").matches);if(dark)document.documentElement.classList.add("dark")}catch(e){}})();`,
+            __html: `(function(){try{var t=localStorage.getItem("pi-theme");var dark=t==="dark"||((t==null||t===""||t==="auto")&&window.matchMedia("(prefers-color-scheme: dark)").matches);if(dark)document.documentElement.classList.add("dark")}catch(e){}try{if(sessionStorage.getItem("minerva-startup-seen")==="1")document.documentElement.classList.add("minerva-startup-seen")}catch(e){}})();`,
           }}
         />
       </head>

@@ -540,7 +540,7 @@ type ThinkingLevel = typeof THINKING_LEVELS[number];
 const LEVEL_COLORS: Record<ThinkingLevel, string> = {
   off:     "var(--text-dim)",
   minimal: "#6b7280",
-  low:     "#60a5fa",
+  low:     "var(--accent-teal)",
   medium:  "#a78bfa",
   high:    "#f472b6",
   xhigh:   "#fb923c",
@@ -2107,7 +2107,7 @@ export function ModelsConfig({ onClose, embedded = false }: { onClose: () => voi
                              {m.id || t("i18n.newModel")}
                           </ConfigSidebarText>
                           {m.reasoning && (
-                            <span style={{ fontSize: 9, padding: "1px 4px", background: "rgba(99,102,241,0.12)", color: "rgba(99,102,241,0.8)", borderRadius: 3, flexShrink: 0 }}>T</span>
+                            <span style={{ fontSize: 9, padding: "1px 4px", background: "color-mix(in srgb, var(--accent-teal) 14%, transparent)", color: "var(--accent-teal)", borderRadius: 3, flexShrink: 0 }}>T</span>
                           )}
                         </ConfigSidebarItem>
                       );

@@ -70,7 +70,7 @@ test("a rejected submission preserves a different run reported by the server", (
   assert.match(reconcileSource, /if \(!agentRunningRef\.current\) return;[\s\S]*?finishPromptWithoutStream/);
 });
 
-test("opening System or Tools lazily starts a dormant session without sending a prompt", () => {
+test("opening System or Tools lazily starts a dormant session without sending a prompt", async () => {
   const loadSystemInfoSource = source.slice(
     source.indexOf("  const loadSystemInfo = useCallback"),
     source.indexOf("  const loadSlashCommands = useCallback"),
@@ -79,6 +79,7 @@ test("opening System or Tools lazily starts a dormant session without sending a 
     source.indexOf("  useEffect(() => {\n    onSystemInfoLoaderChange"),
     source.indexOf("  useEffect(() => {\n    if (!onBranchDataChange) return;"),
   );
+  const settingsPanelSource = await readFile(new URL("../components/SettingsPanel.tsx", import.meta.url), "utf8");
 
   assert.match(loadSystemInfoSource, /sessionIdRef\.current \?\? await ensureNewSession\(\)/);
   assert.doesNotMatch(loadSystemInfoSource, /promoteNewSession\(\)/);
@@ -88,8 +89,9 @@ test("opening System or Tools lazily starts a dormant session without sending a 
   assert.match(loadSystemInfoSource, /setSystemPrompt\(state\.systemPrompt \?\? ""\)/);
   assert.match(loaderEffectSource, /onSystemInfoLoaderChange\?\.\(loadSystemInfo\)/);
   assert.match(loaderEffectSource, /onSystemInfoLoaderChange\?\.\(null\)/);
-  assert.match(appShellSource, /onClick=\{\(\) => handleSystemInfoToggle\("system", mobile\)\}/);
-  assert.match(appShellSource, /onClick=\{\(\) => handleSystemInfoToggle\("tools", mobile\)\}/);
+  assert.match(appShellSource, /onRequestSystemInfo=\{requestSystemInfo\}/);
+  assert.match(settingsPanelSource, /id: "system"/);
+  assert.match(settingsPanelSource, /id: "tools"/);
   assert.match(appShellSource, /systemInfoLoaderRef\.current/);
   assert.doesNotMatch(appShellSource, /systemPrompt !== null \|\| systemInfoLoading/);
   assert.match(appShellSource, /const loadId = \+\+systemInfoLoadIdRef\.current/);

@@ -26,17 +26,16 @@ export function SystemPromptPanel({ loading, prompt, translate }: Props) {
       <style>{`
         .system-prompt-panel {
           display: flex;
-          height: min(600px, 75dvh);
-          min-height: 220px;
+          height: 100%;
+          min-height: 0;
           flex-direction: column;
-          background: var(--bg-panel);
-          border-bottom: 1px solid var(--border);
+          background: var(--bg);
         }
         .system-prompt-scroll {
           min-height: 0;
           flex: 1;
           overflow: auto;
-          padding: 12px 16px;
+          padding: 18px 24px 28px;
         }
         .system-prompt-text {
           color: var(--text-muted);

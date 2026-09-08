@@ -1,0 +1,6 @@
+{
+  "packages": [
+    "npm:pi-hermes-memory@0.9.7",
+    "npm:pi-web-access@0.27.0"
+  ]
+}

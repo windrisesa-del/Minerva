@@ -1,0 +1,14 @@
+# 1. 停止正在运行的 Web 服务
+# 在 Web 终端按 Ctrl+C
+
+# 2. 在 Minerva 内检查并重建 Pi Core
+cd vendor\pi-core
+npm.cmd run check
+npm.cmd --prefix packages\coding-agent run build
+
+# 3. 让 Minerva 刷新项目内的 Pi Core 依赖副本
+cd ..\..
+npm.cmd install --ignore-scripts
+
+# 4. 重新启动 Minerva
+npm.cmd run dev

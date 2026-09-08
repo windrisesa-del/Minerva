@@ -38,10 +38,13 @@
     "release": "npm version patch --no-git-tag-version && npm run build && npm publish --access public"
   },
   "dependencies": {
-    "@earendil-works/pi-agent-core": "0.84.3",
-    "@earendil-works/pi-ai": "0.84.3",
-    "@earendil-works/pi-coding-agent": "0.84.3",
-    "@earendil-works/pi-tui": "0.84.3",
+    "@earendil-works/pi-agent-core": "file:./vendor/pi-core/packages/agent",
+    "@earendil-works/pi-ai": "file:./vendor/pi-core/packages/ai",
+    "@earendil-works/pi-client": "file:./vendor/pi-core/packages/client",
+    "@earendil-works/pi-coding-agent": "file:./vendor/pi-core/packages/coding-agent",
+    "@earendil-works/pi-protocol": "file:./vendor/pi-core/packages/protocol",
+    "@earendil-works/pi-telemetry": "file:./vendor/pi-core/packages/telemetry",
+    "@earendil-works/pi-tui": "file:./vendor/pi-core/packages/tui",
     "ansi_up": "^6.0.6",
     "js-yaml": "^5.2.3",
     "next": "16.3.1",

@@ -374,11 +374,12 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
     >
       <div style={{ display: "flex", alignItems: "flex-end", gap: 6, maxWidth: "85%" }}>
         <div
+          className="minerva-user-message"
           style={{
             flex: 1,
             minWidth: 0,
             background: "var(--user-bg)",
-            border: "1px solid rgba(59,130,246,0.2)",
+            border: "1px solid color-mix(in srgb, var(--accent) 24%, var(--border))",
             borderRadius: 12,
             padding: "8px 12px",
             fontSize: 14,

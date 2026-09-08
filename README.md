@@ -1,8 +1,29 @@
-# Pi Web
+# Minerva
 
-[中文文档](./README.zh-CN.md) | [日本語](./README.ja.md) | [Русский](./README.ru.md)
+教师专用本地 AI 助理。在 [Pi Web](https://github.com/agegr/pi-web) / [pi](https://github.com/earendil-works/pi) 之上改造，用来帮助学生信息管理、作业批改和学习观察，而不是通用编程助手。
 
-Local browser UI for the [pi coding agent](https://github.com/earendil-works/pi). Pi Web uses the same local configuration and session files as pi, so you can browse and resume conversations, run agent turns, configure models and resources, and inspect project files from a browser.
+- 架构说明：[`Minerva_架构构思_v0.1.md`](./Minerva_架构构思_v0.1.md)
+- 数据设计：[`数据库结构.txt`](./数据库结构.txt)
+- 上游 Pi Web 说明：[English](./README.pi-web.md) · [中文](./README.zh-CN.md)
+
+## 启动
+
+Windows 上双击 `启动 Minerva Web.bat`。它会先确保本机 PostgreSQL / FastAPI（`127.0.0.1:8000`），再打开 Web（`http://127.0.0.1:30141`）。
+
+数据库管理界面：`启动 Minerva 数据管理器.bat`（便携 DBeaver）。
+
+首次需要：
+
+1. Node.js `>= 22.19.0`
+2. 在本目录执行 `npm install`
+3. 在 `backend` 执行 `.\scripts\setup.ps1`（下载便携 PostgreSQL、创建 Python 环境并初始化数据库）
+4. 在 Web 的模型面板配置 API Key
+
+改了 `vendor/pi-core` 源码后，按 [`docs/rebuild-pi-core.txt`](./docs/rebuild-pi-core.txt) 重建。开发时不要运行 `next build`。
+
+## 当前能力
+
+导入作业后自动走 Adapter → Marker → Evaluator → Summarizer：结构化试卷/答卷、逐人批改、更新学生观察、生成作业报告。教师在「批改工作台」里看到一份作业一个会话。
 
 ![Pi Web displaying a pi session with structured Markdown, tool calls, and project navigation](https://raw.githubusercontent.com/agegr/pi-web/main/docs/screenshot2.png)
 

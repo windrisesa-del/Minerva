@@ -9,15 +9,23 @@ import {
   setLastSettingsSection,
   type SettingsSection,
 } from "@/lib/settings-navigation";
+import type { ToolEntry } from "@/lib/tool-presets";
 import { ModelsConfig } from "./ModelsConfig";
 import { SkillsConfig } from "./SkillsConfig";
 import { PluginsConfig } from "./PluginsConfig";
+import { SystemPromptPanel } from "./SystemPromptPanel";
+import { ToolDefinitionsPanel } from "./ToolDefinitionsPanel";
 import { ConfigSwitch } from "./SettingsUi";
 
 interface Props {
   cwd: string | null;
   sessionId: string | null;
   initialSection: SettingsSection;
+  hasChat: boolean;
+  systemPrompt: string | null;
+  systemTools: ToolEntry[] | null;
+  systemInfoLoading: boolean;
+  onRequestSystemInfo: () => void;
   onClose: () => void;
   onSessionReloaded: () => void;
 }
@@ -37,6 +45,8 @@ export function SettingsSectionIcon({ section, size = 16, strokeWidth = 1.8 }: {
   };
 
   if (section === "general") return <svg {...common}><path d="M20 7h-9M14 17H5" /><circle cx="7" cy="7" r="3" /><circle cx="17" cy="17" r="3" /></svg>;
+  if (section === "system") return <svg {...common}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /><line x1="8" y1="13" x2="16" y2="13" /><line x1="8" y1="17" x2="13" y2="17" /></svg>;
+  if (section === "tools") return <svg {...common}><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.8-3.8a6 6 0 0 1-7.9 7.9l-6.9 6.9a2.1 2.1 0 0 1-3-3l6.9-6.9a6 6 0 0 1 7.9-7.9z" /></svg>;
   if (section === "models") return <svg {...common}><rect x="4" y="4" width="16" height="16" rx="2" /><rect x="9" y="9" width="6" height="6" /><path d="M9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 15h3M1 9h3M1 15h3" /></svg>;
   if (section === "skills") return <svg {...common}><path d="m12 2-10 5 10 5 10-5-10-5Z" /><path d="m2 12 10 5 10-5M2 17l10 5 10-5" /></svg>;
   if (section === "agents") return <svg {...common} className="settings-section-icon is-agent"><rect x="5" y="7" width="14" height="11" rx="2" /><path d="M9 11h.01M15 11h.01M9 15h6M12 7V4M10 4h4" /></svg>;
@@ -175,7 +185,18 @@ function GeneralSettings({ sessionId, onSessionReloaded }: Pick<Props, "sessionI
   );
 }
 
-export function SettingsPanel({ cwd, sessionId, initialSection, onClose, onSessionReloaded }: Props) {
+export function SettingsPanel({
+  cwd,
+  sessionId,
+  initialSection,
+  hasChat,
+  systemPrompt,
+  systemTools,
+  systemInfoLoading,
+  onRequestSystemInfo,
+  onClose,
+  onSessionReloaded,
+}: Props) {
   const { t } = useI18n();
   const [section, setSection] = useState<SettingsSection>(initialSection);
   const [mountedSections, setMountedSections] = useState<ReadonlySet<SettingsSection>>(
@@ -183,6 +204,8 @@ export function SettingsPanel({ cwd, sessionId, initialSection, onClose, onSessi
   );
   const sections: { id: SettingsSection; label: string; requiresProject: boolean }[] = [
     { id: "general", label: t("settings.general"), requiresProject: false },
+    { id: "system", label: t("system.label"), requiresProject: false },
+    { id: "tools", label: t("tools.label"), requiresProject: false },
     { id: "models", label: t("common.models"), requiresProject: false },
     { id: "skills", label: t("common.skills"), requiresProject: true },
     { id: "plugins", label: t("common.plugins"), requiresProject: true },
@@ -206,6 +229,11 @@ export function SettingsPanel({ cwd, sessionId, initialSection, onClose, onSessi
     setMountedSections((current) => new Set(current).add("general"));
     setLastSettingsSection("general");
   }, [cwd, section]);
+
+  useEffect(() => {
+    if (!hasChat || (section !== "system" && section !== "tools")) return;
+    onRequestSystemInfo();
+  }, [hasChat, onRequestSystemInfo, section]);
 
   const activateSection = (nextSection: SettingsSection) => {
     setMountedSections((current) => new Set(current).add(nextSection));
@@ -271,6 +299,12 @@ export function SettingsPanel({ cwd, sessionId, initialSection, onClose, onSessi
 
         <main className="settings-dialog-main">
           {sectionHost("general", <GeneralSettings sessionId={sessionId} onSessionReloaded={onSessionReloaded} />)}
+          {sectionHost("system", hasChat
+            ? <SystemPromptPanel loading={systemInfoLoading} prompt={systemPrompt} translate={t} />
+            : <div className="settings-inspect-empty">{t("settings.sessionRequired")}</div>)}
+          {sectionHost("tools", hasChat
+            ? <ToolDefinitionsPanel loading={systemInfoLoading} tools={systemTools} translate={t} />
+            : <div className="settings-inspect-empty">{t("settings.sessionRequired")}</div>)}
           {sectionHost("models", <ModelsConfig embedded onClose={onClose} />)}
           {cwd && sectionHost("skills", <SkillsConfig embedded key={cwd} cwd={cwd} onClose={onClose} />)}
           {cwd && sectionHost("plugins", <PluginsConfig embedded key={cwd} cwd={cwd} sessionId={sessionId} onClose={onClose} onReloaded={onSessionReloaded} />)}

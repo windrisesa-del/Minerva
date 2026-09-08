@@ -1,0 +1,22 @@
+DO $block$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'minerva_manager') THEN
+    CREATE ROLE minerva_manager
+      LOGIN
+      NOSUPERUSER
+      NOCREATEDB
+      NOCREATEROLE
+      NOREPLICATION;
+  END IF;
+END
+$block$;
+
+GRANT CONNECT ON DATABASE minerva TO minerva_manager;
+GRANT USAGE ON SCHEMA public TO minerva_manager;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO minerva_manager;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO minerva_manager;
+
+ALTER DEFAULT PRIVILEGES FOR ROLE minerva IN SCHEMA public
+  GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO minerva_manager;
+ALTER DEFAULT PRIVILEGES FOR ROLE minerva IN SCHEMA public
+  GRANT USAGE, SELECT ON SEQUENCES TO minerva_manager;

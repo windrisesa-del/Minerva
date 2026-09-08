@@ -344,6 +344,8 @@ export interface SessionInfo {
   /** True while the runtime session exists only in memory and its JSONL file
    *  has not been created yet. Disk-backed actions must wait until this clears. */
   transient?: boolean;
+  /** Internal Minerva pipeline sessions are opened from an assignment workbench instead of the general sidebar. */
+  minervaInternal?: boolean;
 }
 
 export interface SessionContext {

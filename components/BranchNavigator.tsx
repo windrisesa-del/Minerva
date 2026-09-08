@@ -203,8 +203,8 @@ function TreeNodeView({ node, activePathIds, depth, isLast, parentLines, onSelec
             fontSize: 9,
             fontFamily: "var(--font-mono)",
             color: role === "user" ? "var(--accent)" : "var(--text-dim)",
-            background: role === "user" ? "rgba(37,99,235,0.08)" : "var(--bg-hover)",
-            border: `1px solid ${role === "user" ? "rgba(37,99,235,0.2)" : "var(--border)"}`,
+            background: role === "user" ? "color-mix(in srgb, var(--accent) 10%, var(--bg))" : "var(--bg-hover)",
+            border: `1px solid ${role === "user" ? "color-mix(in srgb, var(--accent) 24%, var(--border))" : "var(--border)"}`,
             borderRadius: 3,
             padding: "0 4px",
             marginRight: 5,
@@ -312,6 +312,7 @@ export function BranchNavigator({ tree, activeLeafId, onLeafChange, inline, cont
     return (
       <div style={{ height: "100%", display: "flex", alignItems: "stretch" }}>
         <button
+          className="minerva-branch-toolbar-control"
           ref={btnRef}
           onClick={() => onToggle ? onToggle() : setOpenInternal((v) => !v)}
           style={{

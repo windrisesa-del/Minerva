@@ -32,6 +32,21 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+!.env.example
+!backend/.env.example
+
+# Project-local plugin install tree
+.pi/npm/
+
+# Local agent notes and QA captures
+/task_plan.md
+/findings.md
+/progress.md
+/artifacts/
+/audit-evidence/
+
+# Nested Pi Core git metadata parked while vendoring
+/vendor/pi-core/.git.bak-nested/
 
 # vercel
 .vercel
@@ -41,3 +56,13 @@ yarn-error.log*
 next-env.d.ts
 .factory
 e2e_*.mjs
+
+# FastAPI / local PostgreSQL runtime
+/backend/.venv/
+/backend/.uv-cache/
+/backend/.runtime/
+/backend/.data/
+/backend/*.log
+__pycache__/
+*.py[cod]
+.pytest_cache/

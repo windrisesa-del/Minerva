@@ -1,0 +1,456 @@
+最适合 Minerva 的不是“所有东西都做成几张宽表”，而是：
+
+> **关系型核心表 + 不可覆盖的学习事件表 + 少量 JSONB 扩展字段**
+
+这样既便于查询统计，也能保留学生做题和教师修改的完整时间线。
+
+## 推荐结构
+
+```mermaid
+erDiagram
+    TEACHERS ||--o{ CLASSES : manages
+    CLASSES ||--o{ ENROLLMENTS : contains
+    STUDENTS ||--o{ ENROLLMENTS : joins
+    CLASSES ||--o{ ASSIGNMENTS : receives
+    ASSIGNMENTS ||--o{ ASSIGNMENT_ITEMS : includes
+    QUESTIONS ||--o{ ASSIGNMENT_ITEMS : selected
+    STUDENTS ||--o{ SUBMISSIONS : submits
+    ASSIGNMENTS ||--o{ SUBMISSIONS : has
+    SUBMISSIONS ||--o{ ANSWER_ATTEMPTS : contains
+    QUESTIONS ||--o{ ANSWER_ATTEMPTS : answers
+    QUESTIONS }o--o{ KNOWLEDGE_POINTS : maps
+    ANSWER_ATTEMPTS ||--o{ GRADING_RESULTS : evaluated
+    STUDENTS ||--o{ LEARNING_EVENTS : produces
+    STUDENTS ||--o{ MASTERY_STATES : summarizes
+```
+
+### 1. 人员与班级
+
+#### `teachers`
+
+```text
+id                  UUID
+name                VARCHAR
+created_at          TIMESTAMPTZ
+```
+
+#### `students`
+
+```text
+id                  UUID
+student_number      VARCHAR
+name                VARCHAR
+status              active / graduated / archived
+created_at          TIMESTAMPTZ
+updated_at          TIMESTAMPTZ
+```
+
+约束：
+
+```text
+UNIQUE (school_id, student_number)
+```
+
+如果暂时没有学校体系，可以先不增加 `school_id`。
+
+#### `student_private_profiles`
+
+单独保存敏感信息：
+
+```text
+student_id          UUID
+guardian_name       VARCHAR
+guardian_phone      VARCHAR
+email               VARCHAR
+notes               TEXT
+portrait_url        TEXT
+updated_at          TIMESTAMPTZ
+```
+
+这样普通做题分析接口不需要接触监护人电话等隐私信息。
+
+#### `classes`
+
+```text
+id                  UUID
+name                VARCHAR
+academic_year       VARCHAR
+semester            VARCHAR
+teacher_id          UUID
+status              active / archived
+```
+
+#### `enrollments`
+
+不要直接把班级名称写在学生记录里，而是建立入班关系：
+
+```text
+id                  UUID
+student_id          UUID
+class_id            UUID
+group_name          VARCHAR
+joined_at           TIMESTAMPTZ
+left_at             TIMESTAMPTZ NULL
+```
+
+这能处理学生升班、转班和历史班级查询。
+
+---
+
+### 2. 题目与作业
+
+#### `questions`
+
+```text
+id                  UUID
+question_type       single_choice / multiple_choice / fill / subjective
+stem                TEXT
+standard_answer     JSONB
+difficulty          SMALLINT
+source              VARCHAR
+created_by          UUID
+created_at          TIMESTAMPTZ
+```
+
+`standard_answer` 使用 JSONB，因为不同题型答案结构不同，例如：
+
+```json
+{
+  "choices": ["B"]
+}
+```
+
+或者：
+
+```json
+{
+  "keywords": ["光合作用", "叶绿体"],
+  "reference_text": "..."
+}
+```
+
+#### `knowledge_points`
+
+```text
+id                  UUID
+subject             VARCHAR
+name                VARCHAR
+parent_id           UUID NULL
+code                VARCHAR
+```
+
+`parent_id` 支持层级结构：
+
+```text
+数学
+└── 代数
+    └── 一元二次方程
+```
+
+#### `question_knowledge_points`
+
+```text
+question_id         UUID
+knowledge_point_id  UUID
+weight              NUMERIC
+```
+
+一道题可以对应多个知识点。
+
+#### `assignments`
+
+```text
+id                  UUID
+class_id            UUID
+title               VARCHAR
+status              draft / published / closed
+published_at        TIMESTAMPTZ
+due_at              TIMESTAMPTZ
+created_by          UUID
+```
+
+#### `assignment_items`
+
+```text
+id                  UUID
+assignment_id       UUID
+question_id         UUID
+position            INTEGER
+max_score           NUMERIC
+question_snapshot   JSONB
+```
+
+这里建议保存 `question_snapshot`。题库中的题目以后即使被修改，已经发布的作业仍然能还原当时的题目内容。
+
+---
+
+### 3. 学生作答
+
+#### `submissions`
+
+表示学生对整份作业的一次提交：
+
+```text
+id                  UUID
+assignment_id       UUID
+student_id          UUID
+attempt_number      INTEGER
+status              draft / submitted / graded
+started_at          TIMESTAMPTZ
+submitted_at        TIMESTAMPTZ
+```
+
+约束：
+
+```text
+UNIQUE (assignment_id, student_id, attempt_number)
+```
+
+#### `answer_attempts`
+
+这是最重要的事实表：
+
+```text
+id                  UUID
+submission_id       UUID
+question_id         UUID
+student_id          UUID
+attempt_number      INTEGER
+answer_payload      JSONB
+is_correct          BOOLEAN NULL
+objective_score     NUMERIC NULL
+answered_at         TIMESTAMPTZ
+duration_ms         INTEGER NULL
+source              manual / import / online
+```
+
+`answer_payload` 可以容纳：
+
+```json
+{
+  "text": "学生填写的答案",
+  "selected_options": ["A", "C"],
+  "attachment_ids": []
+}
+```
+
+建议：
+
+- 每次重新作答新增记录，不覆盖旧答案。
+- 学生原始答案永远作为事实保留。
+- `is_correct` 只用于能够客观判断的题型。
+
+---
+
+### 4. AI 批改与教师确认
+
+#### `grading_results`
+
+不要直接把 AI 评分写回 `answer_attempts`：
+
+```text
+id                  UUID
+answer_attempt_id   UUID
+grader_type         rule / ai / teacher
+score               NUMERIC NULL
+feedback            TEXT
+rubric_result       JSONB
+confidence          NUMERIC NULL
+model_name          VARCHAR NULL
+model_version       VARCHAR NULL
+created_by          UUID NULL
+created_at          TIMESTAMPTZ
+supersedes_id       UUID NULL
+```
+
+同一道答案可以产生多条结果：
+
+```text
+规则判分 → AI 批改草稿 → 教师修订 → 教师最终确认
+```
+
+#### `teacher_reviews`
+
+```text
+id                  UUID
+grading_result_id   UUID
+teacher_id          UUID
+decision            approved / revised / rejected
+final_score         NUMERIC
+comment             TEXT
+reviewed_at         TIMESTAMPTZ
+```
+
+这样可以清楚区分：
+
+- 学生实际作答
+- AI 的建议
+- 教师的最终结论
+
+---
+
+### 5. 学习过程与知识掌握
+
+#### `learning_events`
+
+采用只追加、不覆盖的事件结构：
+
+```text
+id                  UUID
+student_id          UUID
+event_type          answer_submitted / grading_confirmed /
+                    correction_completed / teacher_intervention
+source_type         answer_attempt / submission / teacher_review
+source_id           UUID
+knowledge_point_id  UUID NULL
+event_data          JSONB
+occurred_at         TIMESTAMPTZ
+created_at          TIMESTAMPTZ
+```
+
+例如：
+
+```json
+{
+  "correct": false,
+  "score_ratio": 0.4,
+  "difficulty": 3,
+  "attempt_number": 1
+}
+```
+
+#### `mastery_states`
+
+这是由学习事件计算出来的“当前状态”，不是原始事实：
+
+```text
+student_id          UUID
+knowledge_point_id  UUID
+mastery_score       NUMERIC
+confidence          NUMERIC
+evidence_count      INTEGER
+algorithm_version   VARCHAR
+calculated_at       TIMESTAMPTZ
+```
+
+约束：
+
+```text
+PRIMARY KEY (student_id, knowledge_point_id)
+```
+
+任何掌握度都必须能够追溯到对应的 `learning_events`，不能只留下一个孤立的“掌握率 72%”。
+
+---
+
+### 6. AI 观察与教师结论
+
+如果以后分析长处、薄弱项或学习习惯，建议单独使用：
+
+#### `student_observations`
+
+```text
+id                  UUID
+student_id          UUID
+observation_type    fact / agent_inference / teacher_conclusion
+content             TEXT
+confidence          NUMERIC NULL
+status              proposed / confirmed / rejected / expired
+valid_until         TIMESTAMPTZ NULL
+created_by_type     system / ai / teacher
+created_by_id       UUID NULL
+created_at          TIMESTAMPTZ
+```
+
+#### `observation_evidence`
+
+```text
+observation_id      UUID
+source_type         answer_attempt / learning_event / teacher_note
+source_id           UUID
+```
+
+特别是 `agent_inference`：
+
+- 必须附带证据。
+- 必须允许教师否决。
+- 应该设定有效期。
+- 不应生成永久性的“粗心”“不努力”等性格标签。
+
+---
+
+### 7. 审计与附件
+
+#### `audit_logs`
+
+```text
+id                  UUID
+actor_type          teacher / agent / system
+actor_id            UUID NULL
+action              VARCHAR
+entity_type         VARCHAR
+entity_id           UUID
+before_data         JSONB NULL
+after_data          JSONB NULL
+request_id          UUID
+created_at          TIMESTAMPTZ
+```
+
+#### `attachments`
+
+```text
+id                  UUID
+storage_key         TEXT
+original_name       TEXT
+mime_type           VARCHAR
+size_bytes          BIGINT
+sha256              VARCHAR
+created_at          TIMESTAMPTZ
+```
+
+图片本体存文件系统或对象存储，PostgreSQL 只保存引用。
+
+## 当前项目字段如何迁移
+
+目前 [student-types.ts](C:/Users/myjz_/Desktop/教师助理ai主导/Minerva/lib/student-types.ts:3) 中的字段可以这样拆分：
+
+| 当前字段 | 新位置 |
+|---|---|
+| `name`、`studentNumber` | `students` |
+| `className` | `classes` + `enrollments` |
+| `groupName` | `enrollments.group_name` |
+| `guardianName`、`guardianPhone`、`email` | `student_private_profiles` |
+| `portrait` | `attachments` 或外部文件路径 |
+| `notes` | `student_private_profiles` |
+| `changes` | `audit_logs` |
+
+## 第一阶段不要一次建完
+
+建议首版只落地这 12 张核心表：
+
+```text
+teachers
+students
+student_private_profiles
+classes
+enrollments
+assignments
+questions
+assignment_items
+submissions
+answer_attempts
+grading_results
+audit_logs
+```
+
+等真实答题数据跑通后，再增加：
+
+```text
+knowledge_points
+question_knowledge_points
+learning_events
+mastery_states
+student_observations
+```
+
+最终原则是：**事实表不覆盖，AI 结果可复核，教师结论单独保存，当前状态可以重新计算。** 这套结构比较适合 Minerva，也给以后多班级、多教师和学习分析留出了空间。

@@ -210,11 +210,10 @@ export function ToolDefinitionsPanel({ loading, tools, translate }: Props) {
         .tool-definitions-panel {
           display: grid;
           grid-template-columns: clamp(112px, 26%, 220px) minmax(0, 1fr);
-          height: min(600px, 75dvh);
-          min-height: 240px;
+          height: 100%;
+          min-height: 0;
           overflow: hidden;
-          background: var(--bg-panel);
-          border-bottom: 1px solid var(--border);
+          background: var(--bg);
         }
         .tool-definitions-sidebar,
         .tool-definition-detail {
@@ -236,7 +235,7 @@ export function ToolDefinitionsPanel({ loading, tools, translate }: Props) {
         .tool-definitions-item {
           display: flex;
           width: 100%;
-          min-height: 38px;
+          min-height: 40px;
           align-items: center;
           padding: 8px 12px;
           border: none;
@@ -258,7 +257,7 @@ export function ToolDefinitionsPanel({ loading, tools, translate }: Props) {
         .tool-definitions-item code {
           max-width: 100%;
           color: inherit;
-          font-size: 11px;
+          font-size: 12px;
           font-weight: 600;
           overflow-wrap: anywhere;
         }
@@ -275,7 +274,7 @@ export function ToolDefinitionsPanel({ loading, tools, translate }: Props) {
           gap: 8px;
           margin-bottom: 7px;
           color: var(--text-dim);
-          font-size: 11px;
+          font-size: 12px;
           font-weight: 600;
         }
         .tool-definition-section-label > span:last-child {
@@ -284,7 +283,7 @@ export function ToolDefinitionsPanel({ loading, tools, translate }: Props) {
         }
         .tool-definition-description {
           color: var(--text-muted);
-          font-size: 12px;
+          font-size: 13px;
           line-height: 1.55;
           overflow-wrap: anywhere;
           white-space: pre-wrap;
@@ -298,7 +297,7 @@ export function ToolDefinitionsPanel({ loading, tools, translate }: Props) {
           gap: 12px;
           padding: 9px 0;
           border-bottom: 1px solid var(--border);
-          font-size: 11px;
+          font-size: 12px;
           line-height: 1.45;
         }
         .tool-definition-field-name {
@@ -344,13 +343,13 @@ export function ToolDefinitionsPanel({ loading, tools, translate }: Props) {
           margin: 0;
           padding-left: 18px;
           color: var(--text-muted);
-          font-size: 11px;
+          font-size: 12px;
           line-height: 1.5;
         }
         .tool-definitions-empty {
           padding: 14px 12px;
           color: var(--text-muted);
-          font-size: 12px;
+          font-size: 13px;
           font-style: italic;
           overflow-wrap: anywhere;
         }

@@ -1,0 +1,175 @@
+.minerva-startup-splash {
+  --startup-spread: 120deg;
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+  isolation: isolate;
+}
+
+html.minerva-startup-seen .minerva-startup-splash {
+  display: none;
+}
+
+.minerva-startup-splash::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 50% 48%, color-mix(in srgb, var(--accent) 4%, transparent), transparent 34%),
+    linear-gradient(180deg, color-mix(in srgb, var(--bg-panel) 18%, transparent), transparent 28%);
+  opacity: 0.8;
+}
+
+.minerva-startup-stage {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: max(24px, env(safe-area-inset-top)) max(24px, env(safe-area-inset-right)) max(24px, env(safe-area-inset-bottom)) max(24px, env(safe-area-inset-left));
+}
+
+.minerva-startup-mark {
+  display: inline-flex;
+  align-items: baseline;
+  user-select: none;
+  -webkit-user-select: none;
+  transform-origin: 50% 55%;
+  animation: minerva-startup-rise 700ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
+}
+
+.minerva-startup-shine,
+.minerva-startup-dot {
+  font-family: var(--font-display);
+  font-size: clamp(48px, 7vw, 64px);
+  font-weight: 500;
+  letter-spacing: -0.035em;
+  line-height: 1.05;
+}
+
+.minerva-startup-shine {
+  display: inline-block;
+  color: var(--text);
+  background-image: linear-gradient(
+    var(--startup-spread),
+    var(--text) 0%,
+    var(--text) 35%,
+    var(--accent) 50%,
+    var(--text) 65%,
+    var(--text) 100%
+  );
+  background-position: 150% center;
+  background-size: 200% auto;
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: minerva-startup-shimmer 2s linear 700ms infinite;
+}
+
+.minerva-startup-dot {
+  margin-left: 1px;
+  color: var(--text);
+}
+
+.minerva-startup-theme {
+  position: absolute;
+  top: max(24px, env(safe-area-inset-top));
+  right: max(24px, env(safe-area-inset-right));
+  z-index: 2;
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  transition: background 160ms ease, border-color 160ms ease, color 160ms ease;
+}
+
+.minerva-startup-theme:hover {
+  border-color: color-mix(in srgb, var(--text) 24%, var(--border));
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+}
+
+.minerva-startup-theme:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.minerva-startup-theme svg {
+  display: none;
+  width: 18px;
+  height: 18px;
+}
+
+html:not(.dark) .minerva-startup-icon-moon,
+html.dark .minerva-startup-icon-sun {
+  display: block;
+}
+
+.minerva-startup-splash.is-leaving {
+  pointer-events: none;
+  animation: minerva-startup-curtain-out 480ms cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+
+.minerva-startup-splash.is-leaving .minerva-startup-mark {
+  animation: minerva-startup-mark-out 480ms cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+
+.minerva-startup-splash.is-leaving .minerva-startup-theme {
+  opacity: 0;
+  transition-duration: 180ms;
+}
+
+@keyframes minerva-startup-rise {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes minerva-startup-shimmer {
+  from { background-position: 150% center; }
+  to { background-position: -50% center; }
+}
+
+@keyframes minerva-startup-curtain-out {
+  0% { opacity: 1; visibility: visible; }
+  100% { opacity: 0; visibility: hidden; }
+}
+
+@keyframes minerva-startup-mark-out {
+  from { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }
+  to { opacity: 0; transform: translateY(-3px) scale(0.985); filter: blur(2px); }
+}
+
+@media (max-width: 640px) {
+  .minerva-startup-theme {
+    top: max(16px, env(safe-area-inset-top));
+    right: max(16px, env(safe-area-inset-right));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .minerva-startup-mark {
+    animation: minerva-startup-rise 400ms ease both;
+  }
+
+  .minerva-startup-shine {
+    animation: none;
+    background: none;
+    -webkit-text-fill-color: var(--text);
+  }
+
+  .minerva-startup-splash.is-leaving,
+  .minerva-startup-splash.is-leaving .minerva-startup-mark {
+    animation-duration: 180ms;
+  }
+}

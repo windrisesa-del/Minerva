@@ -2,11 +2,35 @@ import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { createAgentSessionFromServices, createAgentSessionServices, getAgentDir, initTheme, SessionManager, SettingsManager, Theme } from "@earendil-works/pi-coding-agent";
 import { KeybindingsManager as TuiKeybindingsManager, TUI_KEYBINDINGS } from "@earendil-works/pi-tui";
 import { randomUUID } from "crypto";
+import { createSummarizerExtension, SUMMARIZER_SESSION_TYPE, SUMMARIZER_SYSTEM_PROMPT, type SummarizerInfo } from "./minerva-summarizer";
 import { existsSync, realpathSync, writeFileSync } from "fs";
 import { resolve } from "path";
 import { validateAgentImages } from "./image-attachments";
 import { invalidateModelsCache } from "./models-cache";
 import { resolveVisibleModels, selectInitialModelScope } from "./model-scope";
+import { createMinervaDataExtension } from "./minerva-data-extension";
+import { createDocumentParseExtension } from "./document-parse-extension";
+import {
+  ADAPTER_SESSION_TYPE,
+  ADAPTER_SYSTEM_PROMPT,
+  MINERVA_ADAPTER_TOOLS,
+  readAdapterSessionData,
+  type AdapterSessionData,
+} from "./minerva-adapter";
+import {
+  EVALUATOR_SESSION_TYPE,
+  EVALUATOR_SYSTEM_PROMPT,
+  MINERVA_EVALUATOR_TOOLS,
+  readEvaluatorSessionData,
+  type EvaluatorSessionData,
+} from "./minerva-evaluator";
+import {
+  GRADER_SESSION_TYPE,
+  GRADER_SYSTEM_PROMPT,
+  MINERVA_GRADER_TOOLS,
+  readGraderSessionData,
+  type GraderSessionData,
+} from "./minerva-grading";
 import {
   createProjectCommandBashExtension,
   createProjectCommandBashOperations,
@@ -139,6 +163,11 @@ export interface RpcSessionStartOptions {
   initialModel?: { provider: string; modelId: string };
   allowInitialModelFallback?: boolean;
   thinkingLevel?: ThinkingLevel;
+  grader?: { assignmentId: string; title: string; studentId?: string; submissionId?: string };
+  evaluator?: { assignmentId: string; title: string; studentId: string; submissionId: string };
+  summarizer?: SummarizerInfo;
+  adapter?: AdapterSessionData;
+  persistPreferences?: boolean;
 }
 
 const CODING_TOOL_NAMES = ["read", "bash", "powershell", "edit", "write", "grep", "find", "ls"];
@@ -1853,7 +1882,7 @@ export async function startRpcSession(
   cwd: string | undefined,
   options: RpcSessionStartOptions = {},
 ): Promise<{ session: AgentSessionWrapper; realSessionId: string }> {
-  const { initialModel, allowInitialModelFallback, thinkingLevel } = options;
+  const { initialModel, allowInitialModelFallback, thinkingLevel, grader, evaluator, adapter, persistPreferences } = options;
   const requestedToolNames = options.toolNames === undefined
     ? undefined
     : validateSessionToolSelection(options.toolNames);
@@ -1874,16 +1903,56 @@ export async function startRpcSession(
     sessionManager = SessionManager.create(cwd, undefined);
   }
   const sessionCwd = sessionManager.getCwd();
+  const sessionEntries = sessionManager.getEntries() as unknown as SessionEntry[];
+  const persistedGrader = readGraderSessionData(sessionEntries);
+  const persistedEvaluator = readEvaluatorSessionData(sessionEntries);
+  const summaryEntry = [...sessionEntries].reverse().find((entry) => entry.type === "custom" && entry.customType === SUMMARIZER_SESSION_TYPE);
+  const summarizerInfo = options.summarizer ?? (summaryEntry && "data" in summaryEntry ? summaryEntry.data as SummarizerInfo : null);
+  if (options.summarizer && !summaryEntry) {
+    sessionManager.appendCustomEntry(SUMMARIZER_SESSION_TYPE, options.summarizer);
+    sessionManager.appendSessionInfo(`作业报告：${options.summarizer.title}`);
+  }
+  const persistedAdapter = readAdapterSessionData(sessionEntries);
+  if (adapter && !persistedAdapter) {
+    sessionManager.appendCustomEntry(ADAPTER_SESSION_TYPE, adapter);
+    sessionManager.appendSessionInfo(`适配：${adapter.title}`);
+  }
+  if (grader && !persistedGrader) {
+    sessionManager.appendCustomEntry(GRADER_SESSION_TYPE, {
+      version: 1,
+      assignmentId: grader.assignmentId,
+      title: grader.title,
+      ...(grader.studentId ? { studentId: grader.studentId } : {}),
+      ...(grader.submissionId ? { submissionId: grader.submissionId } : {}),
+    } satisfies GraderSessionData);
+    sessionManager.appendSessionInfo(`批改：${grader.title}`);
+  }
+  if (evaluator && !persistedEvaluator) {
+    sessionManager.appendCustomEntry(EVALUATOR_SESSION_TYPE, {
+      version: 2,
+      assignmentId: evaluator.assignmentId,
+      title: evaluator.title,
+      studentId: evaluator.studentId,
+      submissionId: evaluator.submissionId,
+    } satisfies EvaluatorSessionData);
+    sessionManager.appendSessionInfo(`观察：${evaluator.title} · ${evaluator.studentId.slice(0, 8)}`);
+  }
+  const graderInfo = grader ?? persistedGrader ?? null;
+  const evaluatorInfo = evaluator ?? persistedEvaluator ?? null;
+  const isGrader = Boolean(graderInfo);
+  const isEvaluator = Boolean(evaluatorInfo);
+  const isAdapter = Boolean(adapter || persistedAdapter);
+  const isMinervaAgent = isGrader || isEvaluator || isAdapter || Boolean(summarizerInfo);
   const subagentResources = sessionFile
-    ? readSubagentSessionResources(
-        sessionManager.getEntries() as unknown as SessionEntry[],
-      )
+    ? readSubagentSessionResources(sessionEntries)
     : null;
-  const persistedToolNames = subagentResources
+  const persistedToolNames = isMinervaAgent || subagentResources
     ? undefined
-    : readSessionToolSelection(sessionManager.getEntries() as unknown as SessionEntry[]);
-  const selectedToolNames = subagentResources?.tools ?? persistedToolNames ?? requestedToolNames;
-  if (!subagentResources && persistedToolNames === undefined && requestedToolNames !== undefined) {
+    : readSessionToolSelection(sessionEntries);
+  const selectedToolNames = isMinervaAgent
+    ? undefined
+    : subagentResources?.tools ?? persistedToolNames ?? requestedToolNames;
+  if (!isMinervaAgent && !subagentResources && persistedToolNames === undefined && requestedToolNames !== undefined) {
     appendSessionToolSelection(sessionManager, requestedToolNames);
   }
   const subagentLoadsResources = Boolean(
@@ -1954,6 +2023,23 @@ export async function startRpcSession(
                 () => listSubagentProfiles(sessionCwd),
                 isBuiltInSubagentsEnabled,
               ),
+              ...(summarizerInfo ? [createSummarizerExtension(summarizerInfo)] : [createMinervaDataExtension(
+                evaluatorInfo
+                  ? {
+                      jsonAttachmentsOnly: true,
+                      evaluatorAssignmentId: evaluatorInfo.assignmentId,
+                      evaluatorStudentId: evaluatorInfo.studentId,
+                      evaluatorSubmissionId: evaluatorInfo.submissionId,
+                    }
+                  : graderInfo
+                    ? {
+                        graderAssignmentId: graderInfo.assignmentId,
+                        graderStudentId: graderInfo.studentId,
+                        graderSubmissionId: graderInfo.submissionId,
+                      }
+                    : undefined,
+              )]),
+              ...(isAdapter ? [createDocumentParseExtension()] : []),
             ],
             extensionsOverride: (base) => preferUserBashExtension(preferPiWebSubagentExtension(base)),
           },
@@ -1991,34 +2077,52 @@ export async function startRpcSession(
       ...(subagentResources ? { excludeTools: [...SUBAGENT_CONTROL_TOOL_NAMES] } : {}),
     });
 
-    const persistedPreferences = await persistExplicitStartupPreferences(
-      services.settingsManager,
-      {
-        ...(effectiveInitialModel ? { model: effectiveInitialModel } : {}),
-        ...(thinkingLevel ? { thinkingLevel } : {}),
-      },
-      {
-        ...(inner.model
-          ? { model: { provider: inner.model.provider, modelId: inner.model.id } }
-          : {}),
-        thinkingLevel: inner.thinkingLevel,
-        supportsThinking: inner.supportsThinking(),
-      },
-    );
-    if (persistedPreferences.modelDefaultChanged) invalidateModelsCache();
+    if (persistPreferences !== false) {
+      const persistedPreferences = await persistExplicitStartupPreferences(
+        services.settingsManager,
+        {
+          ...(effectiveInitialModel ? { model: effectiveInitialModel } : {}),
+          ...(thinkingLevel ? { thinkingLevel } : {}),
+        },
+        {
+          ...(inner.model
+            ? { model: { provider: inner.model.provider, modelId: inner.model.id } }
+            : {}),
+          thinkingLevel: inner.thinkingLevel,
+          supportsThinking: inner.supportsThinking(),
+        },
+      );
+      if (persistedPreferences.modelDefaultChanged) invalidateModelsCache();
+    }
 
     // If specific tool names were requested (non-empty), set the active tools to the
     // requested builtin coding tools PLUS all extension/package tools, so installed
     // extensions stay usable in Pi Web just like in the `pi` CLI.
-    if (!subagentResources && !chatOnly) {
+    if (summarizerInfo) {
+      inner.setActiveToolsByName(["read_minerva", "write_minerva"]);
+    } else if (isGrader) {
+      inner.setActiveToolsByName([...MINERVA_GRADER_TOOLS]);
+    } else if (isEvaluator) {
+      inner.setActiveToolsByName([...MINERVA_EVALUATOR_TOOLS]);
+    } else if (isAdapter) {
+      inner.setActiveToolsByName([...MINERVA_ADAPTER_TOOLS]);
+    } else if (!subagentResources && !chatOnly) {
       inner.setActiveToolsByName(withExtensionTools(inner, selectedToolNames ?? inner.getActiveToolNames()));
     }
 
-    const exactSystemPrompt = chatOnly
-      ? subagentResources
-        ? () => subagentResources.appendSystemPrompt[0] ?? ""
-        : () => contextFilesSystemPrompt(inner.resourceLoader.getAgentsFiles().agentsFiles)
-      : undefined;
+    const exactSystemPrompt = summarizerInfo
+      ? () => SUMMARIZER_SYSTEM_PROMPT
+      : isGrader
+      ? () => GRADER_SYSTEM_PROMPT
+      : isEvaluator
+        ? () => EVALUATOR_SYSTEM_PROMPT
+      : isAdapter
+        ? () => ADAPTER_SYSTEM_PROMPT
+      : chatOnly
+        ? subagentResources
+          ? () => subagentResources.appendSystemPrompt[0] ?? ""
+          : () => contextFilesSystemPrompt(inner.resourceLoader.getAgentsFiles().agentsFiles)
+        : undefined;
     const wrapper = new AgentSessionWrapper(inner, {
       exactSystemPrompt,
       chatOnly,
@@ -2027,7 +2131,7 @@ export async function startRpcSession(
           console.error("[pi-web] failed to send completion push:", error instanceof Error ? error.message : error);
         });
       },
-      suppressCompletionNotifications: Boolean(subagentResources),
+      suppressCompletionNotifications: Boolean(subagentResources) || isMinervaAgent,
     });
     const realSessionId = inner.sessionId as string;
     registerRpcWrapper(wrapper);
