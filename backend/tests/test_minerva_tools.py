@@ -234,6 +234,21 @@ def test_minerva_grading_skips_existing_ai_and_finalize_sets_graded() -> None:
             assert unrelated_question.status_code == 200
             assert unrelated_question.json()["records"] == []
 
+            processing = client.post(
+                "/api/minerva/write",
+                json={"kind": "processing", "assignment_id": assignment_id, "student_id": student_id, "status": "grading"},
+            )
+            assert processing.status_code == 200, processing.text
+            assert processing.json()["status"] == "grading"
+            assert processing.json()["assignment_status"] == "grading"
+            progress = client.get(f"/api/assignments/{assignment_id}/processing")
+            assert progress.status_code == 200, progress.text
+            assert any(item["student_id"] == student_id and item["status"] == "grading" for item in progress.json()["students"])
+            released = client.post(
+                "/api/minerva/write",
+                json={"kind": "processing", "assignment_id": assignment_id, "student_id": student_id, "status": "submitted"},
+            )
+            assert released.status_code == 200, released.text
             invalid_score = client.post(
                 "/api/minerva/write",
                 json={
@@ -261,6 +276,8 @@ def test_minerva_grading_skips_existing_ai_and_finalize_sets_graded() -> None:
                             "is_correct": True,
                             "max_score": 100,
                             "confidence": 0.9,
+                            "error_type": "none",
+                            "rubric_items": [{"requirement": "过程完整", "score": 88, "max_score": 100, "hit": True}],
                         }
                     ],
                 },
@@ -307,6 +324,8 @@ def test_minerva_grading_skips_existing_ai_and_finalize_sets_graded() -> None:
             assert evidence["question_type"]
             assert evidence["question_stem"]
             assert "rubric_result" in evidence
+            assert evidence["rubric_result"]["error_type"] == "none"
+            assert evidence["rubric_result"]["rubric_items"][0]["hit"] is True
             assert "question_analysis" in evidence
             assert "knowledge_points" in evidence
             assert "answer_payload" in evidence
@@ -358,6 +377,79 @@ def test_minerva_grading_skips_existing_ai_and_finalize_sets_graded() -> None:
             assert history["records"][0]["before"]["evidence_buffer"] == before_state["evidence_buffer"]
             assert history["records"][0]["after"]["description"] == after_state["description"]
             assert history["records"][0]["after"]["changes"] == observed.json()["changes"]
+
+            operation_path = "/description/learning_trajectory/developing_abilities"
+            operation_value = ["开始在多步题中写出中间依据"]
+            operation_before = deepcopy(
+                after_state["description"]["learning_trajectory"]["developing_abilities"]
+            )
+            operation_version = client.get(
+                "/api/minerva/read",
+                params={"resource": "student_description", "student_id": student_id},
+            ).json()["records"][0]["updated_at"]
+            operated = client.post(
+                "/api/minerva/write",
+                json={
+                    "kind": "student_observation",
+                    "assignment_id": assignment_id,
+                    "student_id": student_id,
+                    "expected_observation_updated_at": operation_version,
+                    "operations": [{
+                        "op": "set",
+                        "path": operation_path,
+                        "value": operation_value,
+                        "reason": "本次常规题过程支持该观察",
+                        "evidence_refs": [{"grading_result_id": evidence["id"]}],
+                    }],
+                },
+            )
+            assert operated.status_code == 200, operated.text
+            assert operated.json()["updated_fields"] == ["learning_trajectory"]
+            assert operated.json()["changes"] == [{
+                "path": operation_path,
+                "operation": "update",
+                "before": operation_before,
+                "after": operation_value,
+                "reason": "本次常规题过程支持该观察",
+                "evidence_refs": [{
+                    "grading_result_id": evidence["id"],
+                    "assignment_id": assignment_id,
+                    "submission_id": submission_id,
+                    "question_id": question_id,
+                    "answer_attempt_id": evidence["answer_attempt_id"],
+                }],
+            }]
+            after_state["description"] = deepcopy(operated.json()["description"])
+
+            stale = client.post(
+                "/api/minerva/write",
+                json={
+                    "kind": "student_observation",
+                    "assignment_id": assignment_id,
+                    "student_id": student_id,
+                    "expected_observation_updated_at": operation_version,
+                    "operations": [],
+                    "evaluation_complete": True,
+                    "report_significance": {"include_in_teacher_report": False, "level": "none"},
+                },
+            )
+            assert stale.status_code == 400
+            assert "STUDENT_OBSERVATION_STALE" in stale.json()["detail"]
+
+            mixed_contract = client.post(
+                "/api/minerva/write",
+                json={
+                    "kind": "student_observation",
+                    "assignment_id": assignment_id,
+                    "student_id": student_id,
+                    "operations": [],
+                    "change_notes": [],
+                    "evaluation_complete": True,
+                    "report_significance": {"include_in_teacher_report": False, "level": "none"},
+                },
+            )
+            assert mixed_contract.status_code == 400
+            assert "不能与" in mixed_contract.json()["detail"]
             rejected = client.post("/api/minerva/write", json={"kind": "student_observation", "assignment_id": assignment_id,
                 "student_id": student_id, "profile_fields": {"learning_trajectory": {"recent_progress": ["不带证据的更改"]}}})
             assert rejected.status_code == 400
@@ -382,7 +474,8 @@ def test_minerva_grading_skips_existing_ai_and_finalize_sets_graded() -> None:
                 },
             )
             assert forged_evidence.status_code == 400
-            assert "证据引用不属于当前学生或已失效" in forged_evidence.json()["detail"]
+            assert "grading_result_id 无效" in forged_evidence.json()["detail"]
+            assert "当前学生可用的 grading_result_id" in forged_evidence.json()["detail"]
 
             invented_knowledge = client.post(
                 "/api/minerva/write",
@@ -463,8 +556,13 @@ def test_minerva_grading_skips_existing_ai_and_finalize_sets_graded() -> None:
             assert detail.json()["assignment"]["status"] == "graded"
 
             assert client.post(f"/api/assignments/{assignment_id}/summary/prepare", json={}).status_code == 409
-            completed = client.post("/api/minerva/write", json={"kind": "student_observation", "assignment_id": assignment_id,
+            missing_significance = client.post("/api/minerva/write", json={"kind": "student_observation", "assignment_id": assignment_id,
                 "student_id": student_id, "evaluation_complete": True, "change_notes": []})
+            assert missing_significance.status_code == 400
+            assert "report_significance" in missing_significance.json()["detail"]
+            completed = client.post("/api/minerva/write", json={"kind": "student_observation", "assignment_id": assignment_id,
+                "student_id": student_id, "evaluation_complete": True, "change_notes": [],
+                "report_significance": {"include_in_teacher_report": False, "level": "none"}})
             assert completed.status_code == 200, completed.text
             receipt = client.get(f"/api/assignments/{assignment_id}/evaluation/{student_id}").json()
             assert receipt["completed"] is True
@@ -478,13 +576,21 @@ def test_minerva_grading_skips_existing_ai_and_finalize_sets_graded() -> None:
             assert prepared.status_code == 200, prepared.text
             report_id = prepared.json()["id"]
             assert len(prepared.json()["statistics"]["students"]) == len(records)
+            assert prepared.json()["report_context"]["assignment"]["title"] == "批改工具测试_请忽略"
+            assert len(prepared.json()["report_context"]["questions"]) == len(questions.json()["records"])
             assert client.post(f"/api/assignments/{assignment_id}/summary/prepare", json={}).json()["id"] == report_id
             page = client.get(f"/api/summary/{report_id}/input", params={"resource": "students", "limit": 1}).json()
             assert "grades" not in page["records"][0]
+            assert "evidence_buffer" in page["records"][0]
+            assert page["records"][0]["report_significance"]["include_in_teacher_report"] is False
             assert page["has_more"] == (len(records) > 1)
-            invalid = {"overall": {"text": "测试", "stat_refs": ["invented"]}, "question_highlights": [], "student_highlights": []}
+            invalid = {"assignment_overview": {"text": "测试作业。", "question_ids": [question_id]},
+                       "overall": {"text": "测试", "stat_refs": ["invented"]},
+                       "well_completed_questions": [], "problem_questions": [], "student_highlights": []}
             assert client.post(f"/api/summary/{report_id}", json={"narrative": invalid}).status_code == 400
-            valid = {"overall": {"text": "本次作业已完成批改。", "stat_refs": ["overall.submitted_count"]}, "question_highlights": [], "student_highlights": []}
+            valid = {"assignment_overview": {"text": "本次作业包含当前题目。", "question_ids": [question_id]},
+                     "overall": {"text": "本次作业已完成批改。", "stat_refs": ["overall.submitted_count"]},
+                     "well_completed_questions": [], "problem_questions": [], "student_highlights": []}
             saved_report = client.post(f"/api/summary/{report_id}", json={"narrative": valid})
             assert saved_report.status_code == 200, saved_report.text
             assert saved_report.json()["status"] == "completed"

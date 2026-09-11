@@ -26,6 +26,21 @@ ANALYSIS_FIELDS = {
 }
 
 
+def knowledge_ids_from_analysis(analysis: dict[str, Any]) -> list[str]:
+    """Use specific tested concepts as knowledge IDs; fall back to the coarser domain."""
+    seen: set[str] = set()
+    concepts: list[str] = []
+    for raw in analysis.get("main_concepts") or []:
+        value = str(raw).strip()
+        if value and value not in seen:
+            seen.add(value)
+            concepts.append(value)
+    if concepts:
+        return concepts
+    domain = str(analysis.get("knowledge_domain") or "").strip()
+    return [domain] if domain else []
+
+
 def apply_adapter_assessment(session: Session, assignment_id: UUID, payload: dict[str, Any]) -> dict[str, Any]:
     assignment = session.get(Assignment, assignment_id)
     if assignment is None:
@@ -140,7 +155,7 @@ def apply_adapter_assessment(session: Session, assignment_id: UUID, payload: dic
             "stem": stem,
             "standard_answer": str(reference.get("answer") or ""),
             "rubric": _rubric_text(reference),
-            "knowledge_points": [str(analysis.get("knowledge_domain") or "")],
+            "knowledge_points": knowledge_ids_from_analysis(analysis),
             "source": "adapter",
             "confidence": 1 if not payload.get("uncertainties") else 0.7,
             "spec_attachments": [assessment_attachment],

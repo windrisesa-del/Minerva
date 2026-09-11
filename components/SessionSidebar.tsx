@@ -94,7 +94,7 @@ interface Props {
   skipInitialProjectSelection?: boolean;
   onInitialRestoreDone?: () => void;
   refreshKey?: number;
-  onSessionDeleted?: (sessionId: string) => void;
+  onSessionArchived?: (sessionId: string) => void;
   selectedCwd?: string | null;
   onCwdChange?: (
     cwd: string | null,
@@ -117,10 +117,12 @@ interface Props {
 
 interface AssignmentWorkbenchSummary {
   assignmentId: string;
+  title: string;
   displayTitle: string;
   sessionCount: number;
   running: boolean;
   failed: boolean;
+  archivedAt?: string;
 }
 
 interface WorktreeEntry {
@@ -368,7 +370,97 @@ function PiWebTitle() {
   );
 }
 
-export function SessionSidebar({ selectedSessionId, onSelectSession, studentCenterActive = false, onOpenStudentCenter, assignmentCenterActive = false, onOpenAssignmentCenter, workbenchActiveAssignmentId = null, onOpenAssignmentWorkbench, onNewSession, initialSessionId, skipInitialProjectSelection, onInitialRestoreDone, refreshKey, onSessionDeleted, selectedCwd: selectedCwdProp, onCwdChange, onOpenFile, explorerRefreshKey, onExplorerRefresh, onAtMention, onAtMentions, onBackgroundTaskDone, onRunningSessionIdsChange, onSessionsChange, onInitialLoadComplete }: Props) {
+function AssignmentWorkbenchItem({ workbench, active, onOpen, onChanged }: {
+  workbench: AssignmentWorkbenchSummary;
+  active: boolean;
+  onOpen: () => void;
+  onChanged: (action: "renamed" | "archived") => void;
+}) {
+  const [hovered, setHovered] = useState(false);
+  const [renaming, setRenaming] = useState(false);
+  const [renameValue, setRenameValue] = useState(workbench.title);
+  const [busy, setBusy] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => setRenameValue(workbench.title), [workbench.title]);
+  useEffect(() => { if (renaming) inputRef.current?.select(); }, [renaming]);
+
+  const update = useCallback(async (body: { title?: string; archived?: boolean }) => {
+    setBusy(true);
+    try {
+      const response = await fetch(`/api/assignment-workbench?assignment_id=${encodeURIComponent(workbench.assignmentId)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const result = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
+      onChanged(body.title !== undefined ? "renamed" : "archived");
+    } finally {
+      setBusy(false);
+    }
+  }, [onChanged, workbench.assignmentId]);
+
+  const commitRename = useCallback(() => {
+    const title = renameValue.trim();
+    setRenaming(false);
+    if (!title || title === workbench.title) {
+      setRenameValue(workbench.title);
+      return;
+    }
+    void update({ title });
+  }, [renameValue, update, workbench.title]);
+
+  return (
+    <div
+      className={`minerva-workbench-item${active ? " is-active" : ""}`}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
+      <i className={workbench.running ? "is-running" : workbench.failed ? "is-failed" : "is-completed"} />
+      {renaming ? (
+        <input
+          ref={inputRef}
+          value={renameValue}
+          onChange={(event) => setRenameValue(event.target.value)}
+          onBlur={commitRename}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") commitRename();
+            if (event.key === "Escape") {
+              setRenameValue(workbench.title);
+              setRenaming(false);
+            }
+          }}
+          aria-label="重命名批改工作台"
+        />
+      ) : (
+        <button type="button" className="minerva-workbench-title" onClick={onOpen} title={workbench.displayTitle}>
+          {workbench.displayTitle}
+        </button>
+      )}
+      {hovered && !renaming && (
+        <div className="minerva-workbench-actions">
+          <button type="button" title="重命名" aria-label={`重命名 ${workbench.displayTitle}`} onClick={() => setRenaming(true)} disabled={busy}>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" /></svg>
+          </button>
+          <button
+            type="button"
+            title={workbench.running ? "处理中，暂时无法归档" : "归档"}
+            aria-label={`归档 ${workbench.displayTitle}`}
+            onClick={() => void update({ archived: true })}
+            disabled={busy || workbench.running}
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <><path d="M4 7h16v13H4zM3 3h18v4H3z" /><path d="M9 11h6" /></>
+            </svg>
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function SessionSidebar({ selectedSessionId, onSelectSession, studentCenterActive = false, onOpenStudentCenter, assignmentCenterActive = false, onOpenAssignmentCenter, workbenchActiveAssignmentId = null, onOpenAssignmentWorkbench, onNewSession, initialSessionId, skipInitialProjectSelection, onInitialRestoreDone, refreshKey, onSessionArchived, selectedCwd: selectedCwdProp, onCwdChange, onOpenFile, explorerRefreshKey, onExplorerRefresh, onAtMention, onAtMentions, onBackgroundTaskDone, onRunningSessionIdsChange, onSessionsChange, onInitialLoadComplete }: Props) {
   const { t } = useI18n();
   const [allSessions, setAllSessions] = useState<SessionInfo[]>([]);
   const [assignmentWorkbenches, setAssignmentWorkbenches] = useState<AssignmentWorkbenchSummary[]>([]);
@@ -416,6 +508,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, studentCent
   const sessionRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const explorerRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fileExplorerRef = useRef<FileExplorerHandle>(null);
+  const catalogSessions = allSessions;
 
   const loadSessions = useCallback(async (showLoading = false, force = false) => {
     let loadedSessions: SessionInfo[] | null = null;
@@ -427,6 +520,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, studentCent
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json() as {
         sessions: SessionInfo[];
+        archivedSessions?: SessionInfo[];
         runningSessionIds?: string[];
         completionNotificationSuppressedSessionIds?: string[];
       };
@@ -468,14 +562,22 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, studentCent
     }
   }, [onInitialLoadComplete]);
 
+  const loadAssignmentWorkbenches = useCallback(async () => {
+    const response = await fetch("/api/assignment-workbench", { cache: "no-store" });
+    const body = await response.json() as {
+      workbenches?: AssignmentWorkbenchSummary[];
+    };
+    if (response.ok) {
+      setAssignmentWorkbenches(body.workbenches ?? []);
+    }
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout>;
     const load = async () => {
       try {
-        const response = await fetch("/api/assignment-workbench", { cache: "no-store" });
-        const body = await response.json() as { workbenches?: AssignmentWorkbenchSummary[] };
-        if (response.ok && !cancelled) setAssignmentWorkbenches(body.workbenches ?? []);
+        if (!cancelled) await loadAssignmentWorkbenches();
       } catch {
         // Keep the latest successful list; the next poll retries.
       } finally {
@@ -484,7 +586,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, studentCent
     };
     void load();
     return () => { cancelled = true; clearTimeout(timer); };
-  }, []);
+  }, [loadAssignmentWorkbenches, refreshKey]);
 
   const initialLoadDone = useRef(false);
   useEffect(() => {
@@ -660,13 +762,13 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, studentCent
     if (worktreeState?.worktrees.some((w) => w.path === cwd)) {
       return projectSelection(worktreeState.projectRoot, worktreeState.projectKey);
     }
-    const match = allSessions.find((session) => (
+    const match = catalogSessions.find((session) => (
       session.cwd === cwd || (session.projectRoot ?? session.cwd) === cwd
     ));
     return match
       ? projectSelection(match.projectRoot ?? match.cwd, workspaceKeyOf(match))
       : projectSelection(cwd, cwd);
-  }, [validatedProject, worktreeState, allSessions, projectSelection]);
+  }, [validatedProject, worktreeState, catalogSessions, projectSelection]);
 
   // A worktree/session refresh can hydrate the stable key without changing
   // cwd, so notify when either changes. The parent treats same-cwd key changes
@@ -736,13 +838,13 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, studentCent
 
   // Auto-select cwd and restore session from URL on first load
   useEffect(() => {
-    if (allSessions.length === 0 || skipInitialProjectSelection) return;
+    if (catalogSessions.length === 0 || skipInitialProjectSelection) return;
 
     if (selectedCwd === null) {
       // If restoring a session, set cwd to match that session
       if (initialSessionId && !restoredRef.current) {
         restoredRef.current = true;
-        const target = allSessions.find((s) => s.id === initialSessionId);
+        const target = catalogSessions.find((s) => s.id === initialSessionId);
         if (target) {
           setSelectedCwd(target.cwd);
           onSelectSession(target, true);
@@ -751,10 +853,10 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, studentCent
         // Session not found — notify parent so it can show the placeholder
         onInitialRestoreDone?.();
       }
-      const projects = getRecentProjects(allSessions);
+      const projects = getRecentProjects(catalogSessions);
       if (projects.length > 0) setSelectedCwd(projects[0].root);
     }
-  }, [allSessions, selectedCwd, initialSessionId, skipInitialProjectSelection, onSelectSession, onInitialRestoreDone]);
+  }, [catalogSessions, selectedCwd, initialSessionId, skipInitialProjectSelection, onSelectSession, onInitialRestoreDone]);
 
   // Prefer an exact UI selection while a refetch is in flight. Once the
   // response catches up, the server-resolved path handles Windows case and
@@ -933,7 +1035,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, studentCent
     onNewSession?.(tempId, selectedCwd);
   }, [selectedCwd, onNewSession]);
 
-  const recentProjects = getRecentProjects(allSessions);
+  const recentProjects = getRecentProjects(catalogSessions);
   const showProjectFilter = recentProjects.length > 8;
   const visibleProjects = projectFilter.trim()
     ? recentProjects.filter((project) => project.root.toLowerCase().includes(projectFilter.trim().toLowerCase()))
@@ -992,7 +1094,6 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, studentCent
       : null);
 
   const sessionFamilies = listSessionFamilies(filteredSessions);
-
   return (
     <div className="minerva-sidebar-content" style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
       {customPathOpen && (
@@ -1704,17 +1805,16 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, studentCent
         </button>
         {workbenchOpen && <div className="minerva-workbench-list">
           {assignmentWorkbenches.length === 0 ? <p>暂无处理记录</p> : assignmentWorkbenches.map((workbench) => (
-            <button
-              type="button"
+            <AssignmentWorkbenchItem
               key={workbench.assignmentId}
-              className={workbench.assignmentId === workbenchActiveAssignmentId ? "is-active" : ""}
-              onClick={() => onOpenAssignmentWorkbench?.(workbench.assignmentId)}
-              title={workbench.displayTitle}
-            >
-              <i className={workbench.running ? "is-running" : workbench.failed ? "is-failed" : "is-completed"} />
-              <span>{workbench.displayTitle}</span>
-              <small>{workbench.running ? "处理中" : workbench.failed ? "已中断" : `${workbench.sessionCount} 段`}</small>
-            </button>
+              workbench={workbench}
+              active={workbench.assignmentId === workbenchActiveAssignmentId}
+              onOpen={() => onOpenAssignmentWorkbench?.(workbench.assignmentId)}
+              onChanged={(action) => {
+                if (action === "archived" && workbench.assignmentId === workbenchActiveAssignmentId) onOpenAssignmentCenter?.();
+                void loadAssignmentWorkbenches();
+              }}
+            />
           ))}
         </div>}
       </div>
@@ -1750,9 +1850,9 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, studentCent
               isUnread={familySessions.some((session) => unreadSessionIds.has(session.id))}
               onClick={() => handleSelectSessionFromList(family.root)}
               onRenamed={loadSessions}
-              onDeleted={(id) => {
-                onSessionDeleted?.(id);
-                loadSessions();
+              onArchived={(id) => {
+                onSessionArchived?.(id);
+                void loadSessions(false, true);
               }}
             />
           );
@@ -2011,7 +2111,7 @@ function SessionItem({
   isUnread,
   onClick,
   onRenamed,
-  onDeleted,
+  onArchived,
   depth = 0,
   hasChildren = false,
   collapsed = false,
@@ -2023,7 +2123,7 @@ function SessionItem({
   isUnread?: boolean;
   onClick: () => void;
   onRenamed?: () => void;
-  onDeleted?: (id: string) => void;
+  onArchived?: (id: string) => void;
   depth?: number;
   hasChildren?: boolean;
   collapsed?: boolean;
@@ -2033,8 +2133,7 @@ function SessionItem({
   const [hovered, setHovered] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState("");
-  const [confirmDelete, setConfirmDelete] = useState(false);
-  const [deleting, setDeleting] = useState(false);
+  const [archiveBusy, setArchiveBusy] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   // Select the whole name once the rename input is mounted (startRename's
@@ -2079,36 +2178,22 @@ function SessionItem({
     }
   }, [renameValue, session.id, session.name, onRenamed, title]);
 
-  const performDelete = useCallback(async () => {
+  const updateArchive = useCallback(async (event: React.MouseEvent) => {
+    event.stopPropagation();
     if (session.transient) return;
-    setConfirmDelete(false);
-    setDeleting(true);
+    setArchiveBusy(true);
     try {
-      await fetch(`/api/sessions/${encodeURIComponent(session.id)}`, { method: "DELETE" });
-      onDeleted?.(session.id);
+      const response = await fetch(`/api/sessions/${encodeURIComponent(session.id)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ archived: true }),
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      onArchived?.(session.id);
     } catch {
-      setDeleting(false);
+      setArchiveBusy(false);
     }
-  }, [session.id, session.transient, onDeleted]);
-
-  const handleDeleteClick = useCallback((e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (e.shiftKey) {
-      void performDelete();
-    } else {
-      setConfirmDelete(true);
-    }
-  }, [performDelete]);
-
-  const handleDeleteConfirm = useCallback((e: React.MouseEvent) => {
-    e.stopPropagation();
-    void performDelete();
-  }, [performDelete]);
-
-  const handleDeleteCancel = useCallback((e: React.MouseEvent) => {
-    e.stopPropagation();
-    setConfirmDelete(false);
-  }, []);
+  }, [onArchived, session.id, session.transient]);
 
   const handleContextMenu = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     const handled = dispatchSessionRowContextMenu({
@@ -2132,8 +2217,8 @@ function SessionItem({
     <div
       className="minerva-session-item"
       data-selected={isSelected ? "true" : "false"}
-      onClick={confirmDelete || renaming ? undefined : onClick}
-      onContextMenu={confirmDelete || renaming ? undefined : handleContextMenu}
+      onClick={renaming ? undefined : onClick}
+      onContextMenu={renaming ? undefined : handleContextMenu}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => { setHovered(false); }}
       style={{
@@ -2142,61 +2227,16 @@ function SessionItem({
         alignItems: "center",
         paddingLeft: depth > 0 ? depth * 12 + 14 : 14,
         paddingRight: 8,
-        cursor: confirmDelete || renaming ? "default" : "pointer",
-        background: confirmDelete
-          ? "rgba(239,68,68,0.06)"
-          : isSelected ? "var(--bg-selected)" : hovered ? "var(--bg-hover)" : "transparent",
-        borderLeft: confirmDelete
-          ? "2px solid #ef4444"
-          : isSelected ? "2px solid var(--accent)" : "2px solid transparent",
+        cursor: renaming ? "default" : "pointer",
+        background: isSelected ? "var(--bg-selected)" : hovered ? "var(--bg-hover)" : "transparent",
+        borderLeft: isSelected ? "2px solid var(--accent)" : "2px solid transparent",
         transition: "background 0.1s",
-        opacity: deleting ? 0.5 : 1,
+        opacity: archiveBusy ? 0.5 : 1,
         gap: 6,
         overflow: "hidden",
       }}
     >
-      {confirmDelete ? (
-        /* ── Delete confirmation: same height, two flat buttons ── */
-        <>
-          <div style={{ flex: 1, minWidth: 0, fontSize: 12, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            {t("sidebar.deleteSession", { title: title.slice(0, 22) + (title.length > 22 ? "…" : "") })}
-          </div>
-          <div style={{ display: "flex", gap: 5, flexShrink: 0 }}>
-            <button
-              onClick={handleDeleteConfirm}
-              style={{
-                display: "flex", alignItems: "center", justifyContent: "center", gap: 4,
-                height: 30, padding: "0 11px",
-                background: "#ef4444", border: "none",
-                borderRadius: 6, color: "#fff",
-                cursor: "pointer", fontSize: 12, fontWeight: 600,
-                whiteSpace: "nowrap",
-              }}
-            >
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <polyline points="3 6 5 6 21 6" />
-                <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
-                <path d="M10 11v6M14 11v6" />
-                <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
-              </svg>
-              {t("sidebar.delete")}
-            </button>
-            <button
-              onClick={handleDeleteCancel}
-              style={{
-                display: "flex", alignItems: "center", justifyContent: "center",
-                height: 30, padding: "0 11px",
-                background: "var(--bg)", border: "1px solid var(--border)",
-                borderRadius: 6, color: "var(--text-muted)",
-                cursor: "pointer", fontSize: 12, fontWeight: 500,
-                whiteSpace: "nowrap",
-              }}
-            >
-              {t("sidebar.cancel")}
-            </button>
-          </div>
-        </>
-      ) : renaming ? (
+      {renaming ? (
         /* ── Rename: input fills the same row ── */
         <input
           ref={inputRef}
@@ -2325,20 +2365,22 @@ function SessionItem({
                 </svg>
               </button>
               <button
-                onClick={handleDeleteClick}
-                title={t("sidebar.deleteWithShiftClick")}
+                onClick={updateArchive}
+                title={t("sidebar.archiveSession")}
+                disabled={archiveBusy || isRunning}
                 style={{
                   display: "flex", alignItems: "center", justifyContent: "center",
                   width: 32, height: 32, padding: 0,
                   background: "var(--bg-hover)", border: "1px solid var(--border)",
                   borderRadius: 7, color: "var(--text-muted)",
-                  cursor: "pointer", flexShrink: 0,
+                  cursor: archiveBusy || isRunning ? "default" : "pointer", flexShrink: 0,
                   transition: "background 0.12s, color 0.12s, border-color 0.12s",
                 }}
                 onMouseEnter={(e) => {
-                  e.currentTarget.style.background = "rgba(239,68,68,0.08)";
-                  e.currentTarget.style.color = "#ef4444";
-                  e.currentTarget.style.borderColor = "rgba(239,68,68,0.35)";
+                  if (archiveBusy || isRunning) return;
+                  e.currentTarget.style.background = "var(--bg-selected)";
+                  e.currentTarget.style.color = "var(--accent)";
+                  e.currentTarget.style.borderColor = "color-mix(in srgb, var(--accent) 35%, var(--border))";
                 }}
                 onMouseLeave={(e) => {
                   e.currentTarget.style.background = "var(--bg-hover)";
@@ -2347,10 +2389,7 @@ function SessionItem({
                 }}
               >
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <polyline points="3 6 5 6 21 6" />
-                  <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
-                  <path d="M10 11v6M14 11v6" />
-                  <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+                  <><path d="M4 7h16v13H4zM3 3h18v4H3z" /><path d="M9 11h6" /></>
                 </svg>
               </button>
             </div>

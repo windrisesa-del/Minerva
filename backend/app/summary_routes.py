@@ -21,7 +21,7 @@ def prepare(assignment_id: UUID, session: Session = Depends(get_session)):
     try:
         report = prepare_summary(session, assignment_id)
         session.commit()
-        return report_json(report)
+        return report_json(report, include_context=True)
     except ValueError as error:
         session.rollback()
         raise HTTPException(409, str(error)) from error

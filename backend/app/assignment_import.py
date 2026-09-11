@@ -28,8 +28,8 @@ from .models import (
 )
 
 
-ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".pdf", ".docx", ".txt"}
-SPEC_STEMS = {"题目", "题干", "试卷", "assignment", "paper"}
+ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".pdf", ".docx", ".txt", ".json"}
+SPEC_STEMS = {"题目", "题干", "试卷", "assignment", "paper", "questions", "标准答案", "参考答案"}
 SKIP_NAMES = {".ds_store", "thumbs.db"}
 MAX_FILE_BYTES = 20 * 1024 * 1024
 MAX_TOTAL_BYTES = 80 * 1024 * 1024

@@ -11,6 +11,7 @@ import {
 } from "@/lib/rpc-manager";
 import { reconcileInterruptedEvaluatorRuns } from "@/lib/minerva-evaluator-recovery";
 import { readAssignmentWorkbenches } from "@/lib/assignment-workbench-store";
+import { readSessionArchiveIndex } from "@/lib/session-archive-store";
 
 export const dynamic = "force-dynamic";
 
@@ -20,18 +21,28 @@ export async function GET(req: Request) {
       console.error("[minerva] failed to reconcile interrupted evaluator runs:", error);
     });
     const force = new URL(req.url).searchParams.get("force") === "1";
-    const [persistedSessions, runtimeSessions, workbenches] = await Promise.all([
+    const [persistedSessions, runtimeSessions, workbenches, archiveIndex] = await Promise.all([
       listAllSessions({ force }),
       attachSessionProjectInfo(getRpcSessionInfos()),
       readAssignmentWorkbenches().catch(() => []),
+      readSessionArchiveIndex(),
     ]);
-    const internalSessionIds = new Set(workbenches.flatMap((workbench) => workbench.sessions.map((session) => session.sessionId)));
-    const sessions = mergeSessionLists(persistedSessions, runtimeSessions).map((session) => (
+    const internalSessionIds = new Set(workbenches.flatMap((workbench) => [
+      ...workbench.sessions.map((session) => session.sessionId),
+      ...(workbench.currentSession ? [workbench.currentSession.sessionId] : []),
+    ]));
+    const mergedSessions = mergeSessionLists(persistedSessions, runtimeSessions).map((session) => (
       internalSessionIds.has(session.id) ? { ...session, minervaInternal: true } : session
     ));
+    const archivedIds = new Set(Object.keys(archiveIndex.sessions));
+    const sessions = mergedSessions.filter((session) => !archivedIds.has(session.id));
+    const archivedSessions = mergedSessions
+      .filter((session) => archivedIds.has(session.id))
+      .map((session) => ({ ...session, archivedAt: archiveIndex.sessions[session.id]?.archivedAt }));
     return NextResponse.json(
       {
         sessions,
+        archivedSessions,
         runningSessionIds: getRunningRpcSessionIds(),
         completionNotificationSuppressedSessionIds: getCompletionNotificationSuppressedRpcSessionIds(),
       },

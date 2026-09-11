@@ -46,6 +46,7 @@
     "@earendil-works/pi-telemetry": "file:./vendor/pi-core/packages/telemetry",
     "@earendil-works/pi-tui": "file:./vendor/pi-core/packages/tui",
     "ansi_up": "^6.0.6",
+    "cytoscape": "^3.34.3",
     "js-yaml": "^5.2.3",
     "next": "16.3.1",
     "proper-lockfile": "4.1.2",

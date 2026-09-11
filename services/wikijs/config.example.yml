@@ -1,0 +1,19 @@
+port: 3002
+
+db:
+  type: postgres
+  host: 127.0.0.1
+  port: 5432
+  user: minerva_wiki
+  pass: ""
+  db: minerva_wiki
+  ssl: false
+  schema: public
+
+bindIP: 127.0.0.1
+logLevel: info
+logFormat: default
+offline: false
+ha: false
+dataPath: ./data
+bodyParserLimit: 5mb

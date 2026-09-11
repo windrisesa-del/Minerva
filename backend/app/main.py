@@ -16,9 +16,10 @@ from .assignment_cleanup import discard_imported_assignment
 from .assessment_adapter import apply_adapter_assessment
 from .db import get_session, initialize_database
 from .document_parser import parse_uploaded_document
-from .minerva_tools import read_minerva, write_minerva
+from .minerva_tools import assignment_processing_state, read_minerva, write_minerva
 from .models import Assignment, AuditLog, Teacher
 from .student_roster import StudentSyncIn, upsert_students
+from .wiki_graph import build_student_knowledge_graph
 
 
 APP_DIR = Path(__file__).resolve().parent
@@ -119,6 +120,17 @@ def students(
         {"search": search.strip(), "pattern": f"%{search.strip()}%"},
     ).mappings()
     return [dict(row) for row in rows]
+
+
+@app.get("/api/wiki/knowledge-graph/{student_id}")
+def student_knowledge_graph(
+    student_id: UUID,
+    session: Session = Depends(get_session),
+):
+    try:
+        return build_student_knowledge_graph(session, student_id)
+    except LookupError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
 
 
 @app.get("/api/answers/recent")
@@ -557,6 +569,15 @@ def minerva_read(
         )
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+@app.get("/api/assignments/{assignment_id}/processing")
+def assignment_processing(assignment_id: UUID, session: Session = Depends(get_session)):
+    try:
+        return assignment_processing_state(session, assignment_id)
+    except ValueError as error:
+        status = 404 if str(error) == "作业不存在" else 400
+        raise HTTPException(status_code=status, detail=str(error)) from error
 
 
 @app.post("/api/minerva/write")

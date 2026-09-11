@@ -20,8 +20,9 @@ test("Student Assignments is directly below Student Center and owns a URL view",
 });
 
 test("Assignment page reads the FastAPI proxy and preserves evidence boundaries", async () => {
-  const [component, route, css, adapterStart, adapterPipeline] = await Promise.all([
+  const [component, summary, route, css, adapterStart, adapterPipeline] = await Promise.all([
     read("components/StudentAssignments.tsx"),
+    read("components/AssignmentSummary.tsx"),
     read("app/api/student-assignments/route.ts"),
     read("app/student-assignments.css"),
     read("app/api/adapter/start/route.ts"),
@@ -39,8 +40,11 @@ test("Assignment page reads the FastAPI proxy and preserves evidence boundaries"
   assert.match(component, /\/api\/adapter\/start/);
   assert.match(component, /\/api\/grading\/runs/);
   assert.match(component, /自动处理失败/);
-  assert.match(component, /latestProcessingFailure\.error/);
+  assert.match(component, /visibleProcessingFailure\.error/);
   assert.match(component, /\.\.\.Object\.values\(evaluatorRuns\)/);
+  assert.match(component, /minerva:shown-processing-failures:v1/);
+  assert.match(component, /item\.status === "archived"/);
+  assert.match(component, /关闭这条失败提醒/);
   assert.match(adapterPipeline, /本次导入数据已清理，请重新导入/);
   assert.match(adapterPipeline, /method: "DELETE"/);
   assert.match(component, /sources: body\.adapter_sources/);
@@ -67,7 +71,16 @@ test("Assignment page reads the FastAPI proxy and preserves evidence boundaries"
   assert.match(component, /method: "PATCH"/);
   assert.match(component, /页面显示数据库中的客观记录；教师结论与高风险操作仍需人工确认/);
   assert.match(component, /暂无作业数据/);
-  assert.match(component, /submission_status/);
+  assert.doesNotMatch(component, /assignment-student-table|SUBMISSION_LABELS/);
+  assert.doesNotMatch(summary, /<details|borderRadius|background: "var\(--bg-panel\)"/);
+  assert.match(summary, /<table className="assignment-report-table assignment-question-statistics">/);
+  assert.match(summary, /<table className="assignment-report-table assignment-student-scores">/);
+  assert.match(summary, /<MarkdownBody>\{markdown\}<\/MarkdownBody>/);
+  assert.match(summary, /### 作业内容/);
+  assert.match(summary, /### 整体完成情况/);
+  assert.match(summary, /### 完成较好的题目/);
+  assert.match(summary, /### 需要重点关注的题目/);
+  assert.ok(summary.indexOf("assignment-question-statistics") < summary.indexOf("<MarkdownBody>"));
   assert.match(route, /MINERVA_DATA_API_URL/);
   assert.match(route, /\/api\/assignments\/import/);
   assert.match(route, /request\.arrayBuffer\(\)/);

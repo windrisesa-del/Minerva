@@ -7,6 +7,8 @@ import {
   type StudentRecord,
   type StudentStoreSnapshot,
 } from "@/lib/student-types";
+import { StudentKnowledgeGraph } from "@/components/StudentKnowledgeGraph";
+import { MarkdownBody } from "@/components/MarkdownBody";
 
 type AddMode = "manual" | "import";
 
@@ -59,13 +61,6 @@ const TRAJECTORY_FIELDS = [
   { key: "emerging_problems", label: "新出现的问题" },
   { key: "developing_abilities", label: "正在形成的能力" },
 ] as const;
-const KNOWLEDGE_FIELDS = [
-  { key: "mastered_parts", label: "已掌握部分" },
-  { key: "unmastered_parts", label: "未掌握部分" },
-  { key: "mastery_boundaries", label: "掌握边界" },
-  { key: "common_errors", label: "常见错误" },
-] as const;
-
 function stringList(value: unknown): string[] {
   return Array.isArray(value) ? value.map((item) => String(item).trim()).filter(Boolean) : [];
 }
@@ -130,8 +125,36 @@ function normalizeStudentProfile(value: unknown): StudentProfile {
   return empty;
 }
 
-function lines(value: string) {
-  return value.split("\n").map((item) => item.trim()).filter(Boolean);
+function markdownObservationSection(
+  title: string,
+  values: object,
+  fields: readonly { key: string; label: string }[],
+  teacherEdited: boolean,
+) {
+  const body = fields.flatMap((field) => {
+    const rawItems = (values as Record<string, unknown>)[field.key];
+    const items = Array.isArray(rawItems) ? rawItems.map((item) => String(item).trim()).filter(Boolean) : [];
+    if (items.length === 0) return [];
+    return [`#### ${field.label}`, items.map((item) => `- ${item.replaceAll("\n", "\n  ")}`).join("\n")];
+  });
+  return [`### ${title}${teacherEdited ? " · 教师调整" : ""}`, ...(body.length ? body : ["_暂无观察。_"])].join("\n\n");
+}
+
+function studentObservationMarkdown(profile: StudentProfile, teacherFields: string[]) {
+  return [
+    markdownObservationSection(
+      "Problem-Solving & Learning Profile · 问题解决与学习特征",
+      profile.problem_solving_and_learning_profile,
+      PROBLEM_FIELDS,
+      teacherFields.includes("problem_solving_and_learning_profile"),
+    ),
+    markdownObservationSection(
+      "Learning Trajectory · 学习变化",
+      profile.learning_trajectory,
+      TRAJECTORY_FIELDS,
+      teacherFields.includes("learning_trajectory"),
+    ),
+  ].join("\n\n---\n\n");
 }
 
 const emptyForm: StudentInput = {
@@ -353,8 +376,6 @@ export function StudentCenter({ onInitialReady }: { onInitialReady?: () => void 
   const [importName, setImportName] = useState("");
   const importInputRef = useRef<HTMLInputElement>(null);
   const [observation, setObservation] = useState<{ description: StudentProfile; buffer: BufferItem[]; teacherFields: string[] } | null>(null);
-  const [profileDraft, setProfileDraft] = useState<StudentProfile>(() => emptyStudentProfile());
-  const [observationSaving, setObservationSaving] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -373,7 +394,6 @@ export function StudentCenter({ onInitialReady }: { onInitialReady?: () => void 
   useEffect(() => {
     if (!selectedId) {
       setObservation(null);
-      setProfileDraft(emptyStudentProfile());
       return;
     }
     let cancelled = false;
@@ -386,12 +406,10 @@ export function StudentCenter({ onInitialReady }: { onInitialReady?: () => void 
       const buffer = body.evidence_buffer?.items ?? [];
       const teacherFields = body.description?.teacher_fields ?? [];
       setObservation({ description, buffer, teacherFields });
-      setProfileDraft(description);
     }).catch(() => {
       if (cancelled) return;
       const description = emptyStudentProfile();
       setObservation({ description, buffer: [], teacherFields: [] });
-      setProfileDraft(description);
     });
     return () => { cancelled = true; };
   }, [selectedId]);
@@ -509,47 +527,6 @@ export function StudentCenter({ onInitialReady }: { onInitialReady?: () => void 
     setError(null);
   };
 
-  const updateKnowledgePoint = (knowledgeId: string, update: Partial<KnowledgePointProfile>) => {
-    setProfileDraft((current) => ({
-      ...current,
-      knowledge_profile: {
-        knowledge_points: {
-          ...current.knowledge_profile.knowledge_points,
-          [knowledgeId]: {
-            ...current.knowledge_profile.knowledge_points[knowledgeId],
-            ...update,
-          },
-        },
-      },
-    }));
-  };
-
-  const updateProblemField = (
-    key: (typeof PROBLEM_FIELDS)[number]["key"],
-    value: string,
-  ) => {
-    setProfileDraft((current) => ({
-      ...current,
-      problem_solving_and_learning_profile: {
-        ...current.problem_solving_and_learning_profile,
-        [key]: lines(value),
-      },
-    }));
-  };
-
-  const updateTrajectoryField = (
-    key: (typeof TRAJECTORY_FIELDS)[number]["key"],
-    value: string,
-  ) => {
-    setProfileDraft((current) => ({
-      ...current,
-      learning_trajectory: {
-        ...current.learning_trajectory,
-        [key]: lines(value),
-      },
-    }));
-  };
-
   return (
     <section className="student-center" aria-label="学生中心">
       <header className="student-center-header">
@@ -618,121 +595,15 @@ export function StudentCenter({ onInitialReady }: { onInitialReady?: () => void 
             <div className="student-observation">
               <div className="student-observation-header">
                 <div>
-                  <p className="student-observation-eyebrow">LEARNING OBSERVATION</p>
                   <h3>学习观察</h3>
                 </div>
-                <button
-                  className="student-primary-button"
-                  type="button"
-                  disabled={observationSaving}
-                  onClick={() => {
-                    const fields: Record<string, unknown> = {};
-                    for (const key of ["knowledge_profile", "problem_solving_and_learning_profile", "learning_trajectory"] as const) {
-                      if (JSON.stringify(profileDraft[key]) !== JSON.stringify(observation?.description[key])) {
-                        fields[key] = profileDraft[key];
-                      }
-                    }
-                    if (Object.keys(fields).length === 0) return;
-                    setObservationSaving(true);
-                    void requestJson("/api/student-observations", {
-                      method: "PATCH",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ studentId: selected.id, fields }),
-                    }).then(() => {
-                      setObservation((current) => ({
-                        description: profileDraft,
-                        buffer: current?.buffer ?? [],
-                        teacherFields: [...new Set([...(current?.teacherFields ?? []), ...Object.keys(fields)])],
-                      }));
-                    }).catch((reason) => setError(reason instanceof Error ? reason.message : "学习观察保存失败"))
-                      .finally(() => setObservationSaving(false));
-                  }}
-                >
-                  {observationSaving ? "保存中…" : "保存观察"}
-                </button>
               </div>
-              <div className="student-observation-grid">
-                <div className="student-knowledge is-wide">
-                  <span>1. Knowledge Profile · 知识掌握情况{observation?.teacherFields.includes("knowledge_profile") ? " · 老师手改" : ""}</span>
-                  {Object.entries(profileDraft.knowledge_profile.knowledge_points).length ? (
-                    <div className="student-knowledge-points">
-                      {Object.entries(profileDraft.knowledge_profile.knowledge_points).map(([knowledgeId, point]) => (
-                        <article className="student-knowledge-point" key={knowledgeId}>
-                          <div className="student-knowledge-point-title">
-                            <div><strong>{point.knowledge_name}</strong><small>{knowledgeId}</small></div>
-                            <div className="student-mastery-stars" aria-label={`${point.knowledge_name}掌握程度`}>
-                              {[1, 2, 3, 4, 5].map((star) => (
-                                <button
-                                  key={star}
-                                  type="button"
-                                  className={star <= (point.mastery_level ?? 0) ? "is-active" : undefined}
-                                  aria-label={`${star} 星`}
-                                  onClick={() => updateKnowledgePoint(knowledgeId, { mastery_level: star })}
-                                >★</button>
-                              ))}
-                              <button type="button" className="student-mastery-clear" onClick={() => updateKnowledgePoint(knowledgeId, { mastery_level: null })}>未评估</button>
-                            </div>
-                          </div>
-                          <label className="is-wide">
-                            <span>掌握程度依据</span>
-                            <textarea value={point.mastery_reason} onChange={(event) => updateKnowledgePoint(knowledgeId, { mastery_reason: event.target.value })} placeholder="暂无依据" rows={2} />
-                          </label>
-                          <div className="student-knowledge-grid">
-                            {KNOWLEDGE_FIELDS.map((field) => (
-                              <label key={field.key}>
-                                <span>{field.label}</span>
-                                <textarea value={point[field.key].join("\n")} onChange={(event) => updateKnowledgePoint(knowledgeId, { [field.key]: lines(event.target.value) })} placeholder="暂无观察" rows={3} />
-                              </label>
-                            ))}
-                          </div>
-                        </article>
-                      ))}
-                    </div>
-                  ) : <p className="student-observation-empty">尚无经过评估的知识点。</p>}
-                </div>
-                <section className="student-profile-observation-section is-wide">
-                  <h4>2. Problem-Solving &amp; Learning Profile{observation?.teacherFields.includes("problem_solving_and_learning_profile") ? " · 老师手改" : ""}</h4>
-                  <div className="student-observation-grid">
-                    {PROBLEM_FIELDS.map((field) => (
-                      <label key={field.key}>
-                        <span>{field.label}</span>
-                        <textarea value={profileDraft.problem_solving_and_learning_profile[field.key].join("\n")} onChange={(event) => updateProblemField(field.key, event.target.value)} placeholder="暂无观察" rows={4} />
-                      </label>
-                    ))}
-                  </div>
-                </section>
-                <section className="student-profile-observation-section is-wide">
-                  <h4>3. Learning Trajectory · 学习变化{observation?.teacherFields.includes("learning_trajectory") ? " · 老师手改" : ""}</h4>
-                  <div className="student-observation-grid">
-                    {TRAJECTORY_FIELDS.map((field) => (
-                      <label key={field.key}>
-                        <span>{field.label}</span>
-                        <textarea value={profileDraft.learning_trajectory[field.key].join("\n")} onChange={(event) => updateTrajectoryField(field.key, event.target.value)} placeholder="暂无观察" rows={4} />
-                      </label>
-                    ))}
-                  </div>
-                </section>
-              </div>
-              <section className="student-observation-buffer">
-                <h4>Evidence Buffer · 待验证判断</h4>
-                {observation?.buffer.length ? (
-                  <ul>
-                    {observation.buffer.map((item, index) => (
-                      <li key={item.candidate_id ?? `candidate-${index}`}>
-                        <strong>{item.claim}</strong>
-                        <span>{item.assessment?.reason || "等待更多证据"}</span>
-                        <small>
-                          置信度 {Math.round((item.assessment?.confidence ?? 0) * 100)}%
-                          {item.evidence?.length ? ` · ${item.evidence.length} 条证据` : ""}
-                          {item.status === "contradicted" ? " · 存在反证" : ""}
-                        </small>
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  <p>暂无待观察信号。</p>
-                )}
-              </section>
+              <article className="student-observation-markdown" aria-label="学习观察内容">
+                <MarkdownBody>
+                  {studentObservationMarkdown(observation?.description ?? emptyStudentProfile(), observation?.teacherFields ?? [])}
+                </MarkdownBody>
+              </article>
+              <StudentKnowledgeGraph studentId={selected.id} />
             </div>
             </>
           )}

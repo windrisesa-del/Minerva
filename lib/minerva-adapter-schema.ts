@@ -146,6 +146,26 @@ export type MinervaAssessment = Static<typeof AssessmentSchema>;
 export const QuestionsDraftSchema = Type.Omit(AssessmentSchema, ["student_submissions"]);
 export type MinervaQuestionsDraft = Static<typeof QuestionsDraftSchema>;
 
+export function parseAdapterJsonText(text: string): string {
+  const normalized = text.replace(/^\uFEFF/, "").trim();
+  try {
+    JSON.parse(normalized);
+    return normalized;
+  } catch (initialError) {
+    let candidate = normalized;
+    for (let removed = 0; removed < 3 && candidate.endsWith("}"); removed += 1) {
+      candidate = candidate.slice(0, -1).trimEnd();
+      try {
+        JSON.parse(candidate);
+        return candidate;
+      } catch {
+        // Only tolerate unmatched closing braces appended after a complete JSON object.
+      }
+    }
+    throw initialError;
+  }
+}
+
 function assertQuestionInvariants(assessment: Pick<MinervaAssessment, "questions" | "assets" | "metadata">): Set<string> {
   const positions = assessment.questions.map((question) => question.position);
   if (new Set(positions).size !== positions.length || positions.some((position, index) => position !== index + 1)) {
@@ -167,24 +187,281 @@ function assertQuestionInvariants(assessment: Pick<MinervaAssessment, "questions
   return questionIds;
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function asString(value: unknown): string {
+  if (typeof value === "string") return value.trim();
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  return "";
+}
+
+function asStringList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.map((item) => asString(item)).filter(Boolean);
+}
+
+function asNumber(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
+}
+
+function asUploadPath(value: unknown): string {
+  const text = asString(value);
+  return text.startsWith("/uploads/") ? text : "";
+}
+
+function normalizeContentBlocks(value: unknown, fallbackText = ""): Array<Record<string, unknown>> {
+  if (Array.isArray(value) && value.length > 0) {
+    const blocks: Array<Record<string, unknown>> = [];
+    for (const item of value) {
+      const block = asRecord(item);
+      if (!block) continue;
+      const type = asString(block.type);
+      if (type === "text" && asString(block.text)) blocks.push({ type: "text", text: asString(block.text) });
+      else if (type === "formula" && asString(block.latex)) blocks.push({ type: "formula", latex: asString(block.latex) });
+      else if (type === "image" && asString(block.asset_id)) blocks.push({ type: "image", asset_id: asString(block.asset_id) });
+      else if (type === "table" && Array.isArray(block.data)) blocks.push({ type: "table", data: block.data });
+    }
+    if (blocks.length) return blocks;
+  }
+  const text = fallbackText.trim();
+  return text ? [{ type: "text", text }] : [{ type: "text", text: "（题干缺失）" }];
+}
+
+function normalizeSourceRefs(question: Record<string, unknown>): Array<Record<string, unknown>> {
+  if (Array.isArray(question.source_references) && question.source_references.length) {
+    return question.source_references.flatMap((item) => {
+      const ref = asRecord(item);
+      const path = asUploadPath(ref?.path);
+      if (!path) return [];
+      const page = asNumber(ref?.page);
+      return [{
+        path,
+        ...(page && page >= 1 ? { page: Math.trunc(page) } : {}),
+        block_ids: asStringList(ref?.block_ids),
+      }];
+    });
+  }
+  const source = asRecord(question.source);
+  const path = asUploadPath(source?.path ?? question.source);
+  if (!path) return [{ path: "/uploads/unknown", block_ids: [] }];
+  const page = asNumber(source?.page);
+  return [{
+    path,
+    ...(page && page >= 1 ? { page: Math.trunc(page) } : {}),
+    block_ids: asStringList(source?.block_ids),
+  }];
+}
+
+function defaultMaxScore(questionType: string): number {
+  const type = questionType.toLowerCase();
+  if (type.includes("multiple") || type.includes("多选")) return 8;
+  if (type.includes("fill") || type.includes("填空")) return 8;
+  if (type.includes("subject") || type.includes("constructed") || type.includes("解答")) return 20;
+  return 6;
+}
+
+function normalizeReferenceSolution(question: Record<string, unknown>, questionType: string): Record<string, unknown> {
+  const raw = asRecord(question.reference_solution) ?? asRecord(question.scoring) ?? {};
+  const answer = asString(raw.answer)
+    || asString(question.provided_answer)
+    || asString(question.standard_answer)
+    || "";
+  const parsedMax = asNumber(raw.max_score) ?? asNumber(question.max_score);
+  const maxScore = parsedMax && parsedMax > 0 ? parsedMax : defaultMaxScore(questionType);
+  const reasoning = asStringList(raw.reasoning);
+  const rubric = asString(question.rubric);
+  const scoringCriteria = Array.isArray(raw.scoring_criteria)
+    ? raw.scoring_criteria.flatMap((item) => {
+      const row = asRecord(item);
+      if (!row) return [];
+      const score = asNumber(row.score) ?? maxScore;
+      const requirement = asString(row.requirement) || asString(row.condition) || asString(row.text) || rubric || "按参考答案给分";
+      return [{ score, requirement }];
+    })
+    : [];
+  const partialCredit = Array.isArray(raw.partial_credit)
+    ? raw.partial_credit.flatMap((item) => {
+      const row = asRecord(item);
+      if (!row) return [];
+      const score = asNumber(row.score) ?? 0;
+      const condition = asString(row.condition) || asString(row.requirement) || asString(row.text);
+      if (!condition) return [];
+      return [{ score, condition }];
+    })
+    : [];
+  return {
+    answer,
+    reasoning,
+    max_score: maxScore,
+    scoring_criteria: scoringCriteria.length ? scoringCriteria : [{ score: maxScore, requirement: rubric || "按参考答案给分" }],
+    partial_credit: partialCredit,
+  };
+}
+
+function normalizeAnalysis(question: Record<string, unknown>): Record<string, unknown> {
+  const analysis = asRecord(question.analysis) ?? {};
+  const classification = asRecord(question.classification) ?? {};
+  const difficultyRaw = asString(analysis.difficulty).toLowerCase();
+  const difficulty = ["easy", "medium", "hard", "unknown"].includes(difficultyRaw) ? difficultyRaw : "unknown";
+  return {
+    subject: asString(analysis.subject) || asString(classification.subject) || asString(question.subject) || "数学",
+    knowledge_domain: asString(analysis.knowledge_domain) || asString(classification.knowledge_domain) || "未分类",
+    question_type: asString(analysis.question_type) || asString(classification.question_type) || asString(question.question_type) || "unknown",
+    main_concepts: asStringList(analysis.main_concepts).length ? asStringList(analysis.main_concepts) : asStringList(analysis.key_concepts).length ? asStringList(analysis.key_concepts) : asStringList(question.knowledge_points),
+    expected_path: asStringList(analysis.expected_path).length ? asStringList(analysis.expected_path) : asString(analysis.expected_response_form) ? [asString(analysis.expected_response_form)] : [],
+    dependencies: asStringList(analysis.dependencies),
+    difficulty,
+    required_abilities: asStringList(analysis.required_abilities),
+  };
+}
+
+function fallbackQuestionText(question: Record<string, unknown>): string {
+  const parts = [asString(question.stem), asString(question.prompt)];
+  if (Array.isArray(question.options)) {
+    for (const option of question.options) {
+      const row = asRecord(option);
+      if (!row) continue;
+      const label = asString(row.label);
+      const text = asString(row.text);
+      if (label || text) parts.push(label ? `${label}. ${text}` : text);
+    }
+  }
+  return parts.filter(Boolean).join("\n");
+}
+
+function normalizeQuestion(raw: unknown, index: number): Record<string, unknown> {
+  const question = asRecord(raw) ?? {};
+  const position = Math.trunc(asNumber(question.position) ?? asNumber(question.number) ?? index + 1);
+  const questionType = asString(question.question_type)
+    || asString(asRecord(question.classification)?.question_type)
+    || asString(question.prompt)
+    || "unknown";
+  const parent = asString(question.parent_question_id);
+  return {
+    question_id: asString(question.question_id) || `Q${position}`,
+    ...(parent ? { parent_question_id: parent } : {}),
+    position: position > 0 ? position : index + 1,
+    question_type: questionType,
+    content: normalizeContentBlocks(question.content, fallbackQuestionText(question)),
+    reference_solution: normalizeReferenceSolution(question, questionType),
+    analysis: normalizeAnalysis(question),
+    source_references: normalizeSourceRefs(question),
+  };
+}
+
+function normalizeAssets(value: unknown): Record<string, unknown> {
+  const assets = asRecord(value) ?? {};
+  const cleaned: Record<string, unknown> = {};
+  for (const [id, raw] of Object.entries(assets)) {
+    const asset = asRecord(raw);
+    const path = asUploadPath(asset?.path ?? asset?.storage_key);
+    const sourcePath = asUploadPath(asset?.source_path) || path;
+    if (!asset || !path) continue;
+    cleaned[id] = {
+      path,
+      mime_type: asString(asset.mime_type) || "application/octet-stream",
+      source_path: sourcePath,
+      ...(asString(asset.storage_key).startsWith("/uploads/") ? { storage_key: asString(asset.storage_key) } : {}),
+      ...(asNumber(asset.page) ? { page: Math.trunc(asNumber(asset.page) as number) } : {}),
+      ...(Array.isArray(asset.bbox) ? { bbox: asset.bbox } : {}),
+    };
+  }
+  return cleaned;
+}
+
+function normalizeStudentSubmission(raw: unknown, questionIds: string[]): Record<string, unknown> {
+  const submission = asRecord(raw) ?? {};
+  const answersById = new Map<string, Record<string, unknown>>();
+  for (const item of Array.isArray(submission.answers) ? submission.answers : []) {
+    const answer = asRecord(item);
+    if (!answer) continue;
+    const questionId = asString(answer.question_id);
+    if (!questionId) continue;
+    const statusRaw = asString(answer.status);
+    const status = ["answered", "blank", "uncertain"].includes(statusRaw) ? statusRaw : "uncertain";
+    answersById.set(questionId, {
+      question_id: questionId,
+      status,
+      content: normalizeContentBlocks(answer.content, asString(answer.text)),
+      selected_options: asStringList(answer.selected_options),
+      source_references: normalizeSourceRefs(answer),
+    });
+  }
+  const documents = asStringList(submission.normalized_documents).filter((path) => path.startsWith("/uploads/"));
+  return {
+    student_id: asString(submission.student_id),
+    normalized_documents: documents.length ? documents : ["/uploads/unknown"],
+    assets: normalizeAssets(submission.assets),
+    answers: questionIds.map((questionId) => answersById.get(questionId) ?? {
+      question_id: questionId,
+      status: "blank",
+      content: [],
+      selected_options: [],
+      source_references: [],
+    }),
+    uncertainties: asStringList(submission.uncertainties),
+  };
+}
+
+export function normalizeAssessmentInput(value: unknown, options?: { includeStudents?: boolean }): Record<string, unknown> {
+  const raw = asRecord(value) ?? {};
+  const metadataIn = asRecord(raw.metadata) ?? {};
+  const questions = (Array.isArray(raw.questions) ? raw.questions : []).map((item, index) => normalizeQuestion(item, index));
+  const totalScore = questions.reduce((sum, question) => sum + (asNumber((asRecord(question.reference_solution) ?? {}).max_score) ?? 0), 0);
+  const sourcePaths = questions.flatMap((question) => {
+    const refs = Array.isArray(question.source_references) ? question.source_references : [];
+    return refs.map((ref) => asUploadPath(asRecord(ref)?.path)).filter(Boolean);
+  });
+  const normalizedDocuments = asStringList(raw.normalized_documents).filter((path) => path.startsWith("/uploads/") || path.length > 0);
+  const draft: Record<string, unknown> = {
+    schema_version: "minerva-assessment/0.1",
+    status: "ungraded",
+    metadata: {
+      title: asString(metadataIn.title) || asString(raw.title) || "未命名作业",
+      subject: asString(metadataIn.subject) || "数学",
+      total_score: totalScore > 0 ? totalScore : 1,
+    },
+    questions,
+    assets: normalizeAssets(raw.assets),
+    normalized_documents: normalizedDocuments.length ? normalizedDocuments : [...new Set(sourcePaths.length ? sourcePaths : ["/uploads/unknown"])],
+    uncertainties: asStringList(raw.uncertainties),
+  };
+  if (options?.includeStudents !== false && Array.isArray(raw.student_submissions)) {
+    const questionIds = questions.map((question) => asString(question.question_id));
+    draft.student_submissions = raw.student_submissions.map((item) => normalizeStudentSubmission(item, questionIds));
+  }
+  return draft;
+}
+
 export function validateQuestionsDraft(value: unknown): MinervaQuestionsDraft {
-  if (!Value.Check(QuestionsDraftSchema, value)) {
-    const errors = [...Value.Errors(QuestionsDraftSchema, value)].slice(0, 8)
+  const normalized = normalizeAssessmentInput(value, { includeStudents: false });
+  if (!Value.Check(QuestionsDraftSchema, normalized)) {
+    const errors = [...Value.Errors(QuestionsDraftSchema, normalized)].slice(0, 8)
       .map((error) => `${error.instancePath || "/"}: ${error.message}`);
     throw new Error(`Adapter questions schema validation failed: ${errors.join("; ")}`);
   }
-  const draft = value as MinervaQuestionsDraft;
+  const draft = normalized as MinervaQuestionsDraft;
   assertQuestionInvariants(draft);
   return draft;
 }
 
 export function validateAssessment(value: unknown): MinervaAssessment {
-  if (!Value.Check(AssessmentSchema, value)) {
-    const errors = [...Value.Errors(AssessmentSchema, value)].slice(0, 8)
+  const normalized = normalizeAssessmentInput(value, { includeStudents: true });
+  if (!Value.Check(AssessmentSchema, normalized)) {
+    const errors = [...Value.Errors(AssessmentSchema, normalized)].slice(0, 8)
       .map((error) => `${error.instancePath || "/"}: ${error.message}`);
     throw new Error(`Adapter assessment schema validation failed: ${errors.join("; ")}`);
   }
-  const assessment = value as MinervaAssessment;
+  const assessment = normalized as MinervaAssessment;
   const questionIds = assertQuestionInvariants(assessment);
   const seenStudents = new Set<string>();
   for (const submission of assessment.student_submissions) {

@@ -66,6 +66,49 @@ function dataApiUrl() {
   return (process.env.MINERVA_DATA_API_URL || DEFAULT_DATA_API).replace(/\/$/, "");
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function coerceEvidenceItem(value: unknown): unknown {
+  const item = asRecord(value);
+  if (!item) return value;
+  const source = asRecord(item.source) ?? {};
+  const gradingResultId = item.grading_result_id ?? source.grading_result_id;
+  if (typeof gradingResultId === "string" && gradingResultId && !asRecord(item.source)?.grading_result_id) {
+    item.source = { ...source, grading_result_id: gradingResultId };
+  }
+  return item;
+}
+
+export function coerceEvaluatorWrite(payload: Record<string, unknown>): Record<string, unknown> {
+  const bufferItems = payload.buffer_items;
+  if (Array.isArray(bufferItems)) {
+    payload.buffer_items = bufferItems.map((item) => {
+      const record = asRecord(item);
+      if (!record || !Array.isArray(record.evidence)) return item;
+      return { ...record, evidence: record.evidence.map((entry) => coerceEvidenceItem(entry)) };
+    });
+  }
+  if (Array.isArray(payload.operations)) {
+    payload.operations = payload.operations.map((operation) => {
+      const record = asRecord(operation);
+      if (!record || typeof record.path !== "string" || !record.path.startsWith("/evidence_buffer/")) {
+        return operation;
+      }
+      const value = asRecord(record.value);
+      if (!value || !Array.isArray(value.evidence)) return operation;
+      return {
+        ...record,
+        value: { ...value, evidence: value.evidence.map((entry) => coerceEvidenceItem(entry)) },
+      };
+    });
+  }
+  return payload;
+}
+
 function errorResult(message: string) {
   return {
     content: [{ type: "text" as const, text: message }],
@@ -223,6 +266,7 @@ export function createMinervaDataExtension(options?: {
   evaluatorAssignmentId?: string;
   evaluatorStudentId?: string;
   evaluatorSubmissionId?: string;
+  evaluatorObservationUpdatedAt?: string | null;
 }): InlineExtension {
   const evaluatorAssignmentId = options?.evaluatorAssignmentId?.trim() ?? "";
   const evaluatorMode = Boolean(evaluatorAssignmentId);
@@ -415,13 +459,17 @@ export function createMinervaDataExtension(options?: {
           ? [
               "Use kind=grading only and write only the assignment_id bound to this Marker session.",
               "Use feedback for the grading basis: concise for objective or fill-in items, detailed and rubric-linked for constructed responses.",
+              "Each item must also include error_type, knowledge_results, and rubric_items. Do not leave those facts only in feedback.",
               "Write all missing question results for the assigned student. Never call finalize; the host performs the assignment-wide completeness check.",
             ]
           : evaluatorMode
-          ? [
+            ? [
               "Use only kind=student_observation for the current bound student.",
-              "profile_fields may contain only knowledge_profile, problem_solving_and_learning_profile, or learning_trajectory. mastery_level is an integer from 1 to 5 or null.",
-              "buffer_items is the complete active candidate list after this evaluation. Preserve teacher-authored observations unless evidence justifies a substantive change.",
+              "Use operations for all changes. Each operation changes one allowed profile node or one buffer candidate and carries its own reason and current-assignment grading_result_id.",
+              "Set a whole knowledge point at /description/knowledge_profile/knowledge_points/{knowledge_id}; set one fixed profile array at /description/{section}/{attribute}; set or remove one buffer candidate at /evidence_buffer/{candidate_id}.",
+              "Preserve teacher-authored observations unless evidence justifies a substantive change. mastery_level is an integer from 1 to 5 or null.",
+              "Each evidence item and evidence_ref may supply only grading_result_id; the host fills assignment, submission, question, and answer IDs from that grade.",
+              "The final evaluation_complete write must include report_significance so the assignment report can consume it.",
               "Never write grading results and never finalize an assignment.",
             ]
           : [
@@ -438,28 +486,42 @@ export function createMinervaDataExtension(options?: {
           assignment_id: Type.String({ description: "Assignment UUID" }),
           student_id: Type.Optional(Type.String({ description: "Required when saving per-student grading, description, or buffer items" })),
           authored_by: evaluatorMode ? Type.Optional(Type.Literal("agent")) : Type.Optional(Type.String({ description: "agent or teacher. Used for student_description." })),
-          evaluation_complete: Type.Optional(Type.Boolean({ description: "Evaluator must set true on its final write, even if no changes are needed (change_notes: []). Freezes profile and evidence for reporting." })),
-          fields: !evaluatorMode
-            ? Type.Optional(Type.Any({ description: "Partial student_description fields to merge" }))
-            : Type.Optional(Type.Any({ description: "Unused in Evaluator mode; use profile_fields." })),
-          profile_fields: evaluatorMode
-            ? Type.Optional(Type.Object({
-                knowledge_profile: Type.Optional(Type.Any({ description: "knowledge_points keyed by existing knowledge_id; mastery_level is integer 1-5 or null." })),
-                problem_solving_and_learning_profile: Type.Optional(Type.Any({ description: "Only the four fixed problem-solving/learning arrays plus evidence_refs." })),
-                learning_trajectory: Type.Optional(Type.Any({ description: "Only the four fixed trajectory arrays plus evidence_refs." })),
-              }, { additionalProperties: false, description: "Only materially changed top-level profile sections." }))
-            : Type.Optional(Type.Any()),
-          change_notes: Type.Optional(Type.Array(Type.Object({
-            path: Type.String({ description: "Exact JSON Pointer of an actual changed value, e.g. /description/learning_trajectory/recent_progress. Arrays are atomic; buffer paths use candidate_id." }),
-            reason: Type.String({ minLength: 1, description: "Why this specific change is justified; include promotion/removal rationale where applicable." }),
-            evidence_refs: Type.Array(Type.Object({
-              grading_result_id: Type.String(),
-              assignment_id: Type.Optional(Type.String()),
-              submission_id: Type.Optional(Type.String()),
-              question_id: Type.Optional(Type.String()),
-              answer_attempt_id: Type.Optional(Type.String()),
-            }), { minItems: 1 }),
-          }), { description: "Required for student_observation: one note per actual changed path. Server computes and stores before/after values." })),
+          ...(evaluatorMode ? {
+            evaluation_complete: Type.Optional(Type.Boolean({ description: "Set true on the final write, including when operations is empty. Freezes the profile, evidence buffer, and report_significance for reporting." })),
+            report_significance: Type.Optional(Type.Object({
+                include_in_teacher_report: Type.Boolean({ description: "True for medium or strong signals the teacher should see, even if the Student Profile did not change." }),
+                level: Type.Union([
+                  Type.Literal("none"),
+                  Type.Literal("low"),
+                  Type.Literal("medium"),
+                  Type.Literal("high"),
+                ]),
+                type: Type.Optional(Type.Union([
+                  Type.Literal("progress"),
+                  Type.Literal("unusual_performance"),
+                  Type.Literal("mixed_performance"),
+                  Type.Literal("observation"),
+                  Type.Null(),
+                ])),
+                message: Type.Optional(Type.String({ description: "One Chinese sentence the report can use directly." })),
+                question_ids: Type.Optional(Type.Array(Type.String())),
+                buffer_candidate_ids: Type.Optional(Type.Array(Type.String())),
+              }, { additionalProperties: false })),
+            operations: Type.Optional(Type.Array(Type.Object({
+                op: Type.Union([Type.Literal("set"), Type.Literal("remove")]),
+                path: Type.String({ description: "Exact allowed JSON Pointer for one knowledge point, one fixed profile array, or one buffer candidate." }),
+                value: Type.Optional(Type.Any({ description: "Required for set; omit for remove." })),
+                reason: Type.String({ minLength: 1, description: "Why this single update follows from the current assignment." }),
+                evidence_refs: Type.Array(Type.Object({
+                  grading_result_id: Type.String({ description: "A real AI grading result from the current assignment and student." }),
+                }, { additionalProperties: false }), { minItems: 1 }),
+              }, { additionalProperties: false }))),
+          } : {
+            fields: Type.Optional(Type.Any({ description: "Partial student_description fields to merge" })),
+            profile_fields: Type.Optional(Type.Any()),
+            change_notes: Type.Optional(Type.Array(Type.Any())),
+            buffer_items: Type.Optional(Type.Any()),
+          }),
           ...(!graderMode && !evaluatorMode ? {
             finalize: Type.Optional(Type.Boolean({ description: "When true, mark the assignment graded if every submitted student has AI grades" })),
           } : {}),
@@ -472,6 +534,18 @@ export function createMinervaDataExtension(options?: {
             is_correct: Type.Optional(Type.Boolean()),
             max_score: Type.Optional(Type.Number()),
             confidence: Type.Optional(Type.Number()),
+            error_type: Type.Optional(Type.String({ description: "none | conceptual_error | procedural_error | careless_error | blank | unreadable" })),
+            knowledge_results: Type.Optional(Type.Array(Type.Object({
+              knowledge_id: Type.String({ description: "Must match the question knowledge_points or analysis.main_concepts." }),
+              result: Type.String({ description: "correct | incorrect | partial | not_assessed" }),
+              note: Type.Optional(Type.String()),
+            }))),
+            rubric_items: Type.Optional(Type.Array(Type.Object({
+              requirement: Type.String(),
+              score: Type.Number(),
+              max_score: Type.Optional(Type.Number()),
+              hit: Type.Optional(Type.Boolean()),
+            }))),
           })) : Type.Optional(Type.Array(Type.Object({
             question_id: Type.Optional(Type.String()),
             score: Type.Optional(Type.Number()),
@@ -479,45 +553,10 @@ export function createMinervaDataExtension(options?: {
             is_correct: Type.Optional(Type.Boolean()),
             max_score: Type.Optional(Type.Number()),
             confidence: Type.Optional(Type.Number()),
+            error_type: Type.Optional(Type.String()),
+            knowledge_results: Type.Optional(Type.Array(Type.Any())),
+            rubric_items: Type.Optional(Type.Array(Type.Any())),
           }))),
-          buffer_items: evaluatorMode ? Type.Optional(Type.Array(Type.Object({
-            candidate_id: Type.String({ description: "Stable unique candidate ID" }),
-            target: Type.Object({
-              profile_section: Type.Union([
-                Type.Literal("knowledge_profile"),
-                Type.Literal("problem_solving_and_learning_profile"),
-                Type.Literal("learning_trajectory"),
-              ]),
-              knowledge_id: Type.Optional(Type.String({ description: "Required only for knowledge_profile" })),
-              attribute: Type.String({ description: "Fixed attribute under the selected profile section" }),
-            }, { additionalProperties: false }),
-            claim: Type.String({ description: "Specific, testable Chinese candidate judgment" }),
-            status: Type.Union([Type.Literal("collecting"), Type.Literal("contradicted")]),
-            evidence: Type.Array(Type.Object({
-              evidence_id: Type.String(),
-              observation: Type.String(),
-              relationship: Type.Union([Type.Literal("supports"), Type.Literal("contradicts"), Type.Literal("context_only")]),
-              evidence_type: Type.String(),
-              relevance: Type.Optional(Type.Number()),
-              reliability: Type.Optional(Type.Number()),
-              source: Type.Object({
-                assignment_id: Type.String(),
-                submission_id: Type.String(),
-                question_id: Type.String(),
-                answer_attempt_id: Type.String(),
-                grading_result_id: Type.String(),
-                observed_at: Type.Optional(Type.String()),
-              }, { additionalProperties: false }),
-            }, { additionalProperties: false })),
-            assessment: Type.Object({
-              confidence: Type.Number(),
-              reason: Type.String(),
-              missing_evidence: Type.Array(Type.String()),
-            }, { additionalProperties: false }),
-            recommended_action: Type.Literal("KEEP_BUFFERED"),
-            created_at: Type.Optional(Type.String()),
-            updated_at: Type.Optional(Type.String()),
-          }, { additionalProperties: false }))) : Type.Optional(Type.Any()),
         }),
         async execute(_toolCallId, params) {
           if (evaluatorMode && (params as { finalize?: boolean }).finalize) {
@@ -558,13 +597,14 @@ export function createMinervaDataExtension(options?: {
                     ...(graderSubmissionId ? { submission_id: graderSubmissionId } : {}),
                   }
                 : evaluatorMode
-                  ? {
+                  ? coerceEvaluatorWrite({
                       ...params,
                       kind: "student_observation",
                       assignment_id: evaluatorAssignmentId,
                       student_id: evaluatorStudentId,
                       authored_by: "agent",
-                    }
+                      expected_observation_updated_at: options?.evaluatorObservationUpdatedAt ?? null,
+                    })
                   : params),
             });
             const payload = await response.json().catch(() => ({ detail: "数据服务返回了无效响应" }));

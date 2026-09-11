@@ -9,13 +9,14 @@ export interface EvaluatorRunRecord {
   sessionId: string;
   title: string;
   startedAt: string;
-  status?: "running" | "completed" | "failed";
+  status?: "running" | "completed" | "failed" | "waiting_for_reconnect" | "archived";
   completedStudents?: number;
   totalStudents?: number;
   error?: string;
   failedAt?: string;
   updatedAt?: string;
   cleanupPending?: boolean;
+  hostPid?: number;
 }
 
 interface EvaluatorRunStore {
@@ -41,13 +42,14 @@ function validateStore(value: unknown): EvaluatorRunStore {
       sessionId: run.sessionId,
       title: typeof run.title === "string" ? run.title : "",
       startedAt: typeof run.startedAt === "string" ? run.startedAt : new Date().toISOString(),
-      ...(run.status === "running" || run.status === "completed" || run.status === "failed" ? { status: run.status } : {}),
+      ...(run.status === "running" || run.status === "completed" || run.status === "failed" || run.status === "waiting_for_reconnect" || run.status === "archived" ? { status: run.status } : {}),
       ...(typeof run.completedStudents === "number" ? { completedStudents: run.completedStudents } : {}),
       ...(typeof run.totalStudents === "number" ? { totalStudents: run.totalStudents } : {}),
       ...(typeof run.error === "string" ? { error: run.error } : {}),
       ...(typeof run.failedAt === "string" ? { failedAt: run.failedAt } : {}),
       ...(typeof run.updatedAt === "string" ? { updatedAt: run.updatedAt } : {}),
       ...(run.cleanupPending === true ? { cleanupPending: true } : {}),
+      ...(typeof run.hostPid === "number" ? { hostPid: run.hostPid } : {}),
     };
   }
   return { version: 2, runs };
@@ -78,7 +80,7 @@ export async function upsertEvaluatorRun(run: EvaluatorRunRecord): Promise<Evalu
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       }
-      const stored = { ...run, updatedAt: new Date().toISOString() };
+      const stored = { ...run, updatedAt: new Date().toISOString(), hostPid: run.hostPid ?? process.pid };
       store.runs[run.assignmentId] = stored;
       await mkdir(dirname(STORE_PATH), { recursive: true });
       const temporaryPath = `${STORE_PATH}.${process.pid}.${Date.now()}.tmp`;

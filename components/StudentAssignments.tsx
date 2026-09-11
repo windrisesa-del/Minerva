@@ -10,7 +10,6 @@ import type {
   AssignmentListResponse,
   AssignmentStatus,
   GradingRun,
-  SubmissionStatus,
 } from "@/lib/student-assignment-types";
 
 interface Props {
@@ -22,16 +21,16 @@ interface Props {
 const STATUS_LABELS: Record<AssignmentStatus, string> = {
   draft: "草稿",
   ungraded: "未批改",
+  grading: "批改中",
   graded: "完成批改",
   archived: "已归档",
 };
 
-const SUBMISSION_LABELS: Record<SubmissionStatus, string> = {
-  not_started: "未开始",
-  draft: "作答中",
-  submitted: "已提交",
-  graded: "已批改",
-};
+const PROCESSING_FAILURE_HISTORY_KEY = "minerva:shown-processing-failures:v1";
+
+function processingFailureKey(run: GradingRun) {
+  return `${run.assignmentId}:${run.failedAt || run.startedAt}`;
+}
 
 function formatDate(value: string | null, includeTime = false) {
   if (!value) return "—";
@@ -65,6 +64,9 @@ export function StudentAssignments({ onInitialReady, onOpenWorkbench }: Props) {
   const [importResult, setImportResult] = useState<AssignmentImportResponse | null>(null);
   const [gradingRuns, setGradingRuns] = useState<Record<string, GradingRun>>({});
   const [evaluatorRuns, setEvaluatorRuns] = useState<Record<string, GradingRun>>({});
+  const [shownFailureKeys, setShownFailureKeys] = useState<Set<string>>(new Set());
+  const [failureHistoryReady, setFailureHistoryReady] = useState(false);
+  const [visibleProcessingFailure, setVisibleProcessingFailure] = useState<GradingRun | null>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
   const initialReadySent = useRef(false);
   const handledFailureRef = useRef<string | null>(null);
@@ -146,6 +148,9 @@ export function StudentAssignments({ onInitialReady, onOpenWorkbench }: Props) {
       const body = await response.json() as { error?: string; detail?: string };
       if (!response.ok) throw new Error(body.error || body.detail || `HTTP ${response.status}`);
       setArchivePrompt(null);
+      if (nextStatus === "archived") {
+        setVisibleProcessingFailure((current) => current?.assignmentId === id ? null : current);
+      }
       await loadAssignments();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "作业状态更新失败");
@@ -237,6 +242,17 @@ export function StudentAssignments({ onInitialReady, onOpenWorkbench }: Props) {
   }, []);
 
   useEffect(() => {
+    try {
+      const stored = JSON.parse(window.localStorage.getItem(PROCESSING_FAILURE_HISTORY_KEY) || "[]");
+      setShownFailureKeys(new Set(Array.isArray(stored) ? stored.filter((item): item is string => typeof item === "string") : []));
+    } catch {
+      setShownFailureKeys(new Set());
+    } finally {
+      setFailureHistoryReady(true);
+    }
+  }, []);
+
+  useEffect(() => {
     const gradingRunning = Object.values(gradingRuns).some((run) => run.running);
     const evaluatorRunning = Object.values(evaluatorRuns).some((run) => run.running);
     const waitingForObserver = (data?.assignments ?? []).some((item) => (
@@ -249,20 +265,53 @@ export function StudentAssignments({ onInitialReady, onOpenWorkbench }: Props) {
     return () => window.clearInterval(timer);
   }, [data?.assignments, evaluatorRuns, gradingRuns, loadGradingRuns]);
 
-  const latestProcessingFailure = useMemo(() => [
+  const processingFailures = useMemo(() => [
     ...Object.values(gradingRuns),
     ...Object.values(evaluatorRuns),
   ]
-    .filter((run) => run.status === "failed" && run.error)
-    .sort((left, right) => (right.failedAt || right.startedAt).localeCompare(left.failedAt || left.startedAt))[0] ?? null, [evaluatorRuns, gradingRuns]);
+    .filter((run) => (run.status === "failed" || run.status === "waiting_for_reconnect") && run.error)
+    .sort((left, right) => (right.failedAt || right.startedAt).localeCompare(left.failedAt || left.startedAt)), [evaluatorRuns, gradingRuns]);
+
+  const latestProcessingFailure = processingFailures[0] ?? null;
+
+  const displayableProcessingFailures = useMemo(() => {
+    if (!data) return [];
+    const archivedIds = new Set(data.assignments.filter((item) => item.status === "archived").map((item) => item.id));
+    return processingFailures.filter((run) => !archivedIds.has(run.assignmentId));
+  }, [data, processingFailures]);
 
   useEffect(() => {
     if (!latestProcessingFailure) return;
-    const failureKey = `${latestProcessingFailure.assignmentId}:${latestProcessingFailure.failedAt || latestProcessingFailure.startedAt}`;
+    const failureKey = processingFailureKey(latestProcessingFailure);
     if (handledFailureRef.current === failureKey) return;
     handledFailureRef.current = failureKey;
     void loadAssignments();
   }, [latestProcessingFailure, loadAssignments]);
+
+  useEffect(() => {
+    if (!failureHistoryReady || !data) return;
+    if (visibleProcessingFailure) {
+      const archived = data.assignments.some((item) => (
+        item.id === visibleProcessingFailure.assignmentId && item.status === "archived"
+      ));
+      if (archived) setVisibleProcessingFailure(null);
+      return;
+    }
+    const nextFailure = displayableProcessingFailures.find((run) => !shownFailureKeys.has(processingFailureKey(run)));
+    if (!nextFailure) return;
+    const nextKey = processingFailureKey(nextFailure);
+    setVisibleProcessingFailure(nextFailure);
+    setShownFailureKeys((current) => {
+      const next = new Set(current);
+      next.add(nextKey);
+      try {
+        window.localStorage.setItem(PROCESSING_FAILURE_HISTORY_KEY, JSON.stringify([...next].slice(-100)));
+      } catch {
+        // The current page still shows the notice when persistent browser storage is unavailable.
+      }
+      return next;
+    });
+  }, [data, displayableProcessingFailures, failureHistoryReady, shownFailureKeys, visibleProcessingFailure]);
 
   const filteredAssignments = useMemo(() => {
     const normalized = query.trim().toLocaleLowerCase("zh-CN");
@@ -290,10 +339,13 @@ export function StudentAssignments({ onInitialReady, onOpenWorkbench }: Props) {
         </div>
       </header>
 
-      {latestProcessingFailure && (
+      {visibleProcessingFailure && (
         <div className="assignment-grading-failure" role="alert">
-          <strong>{latestProcessingFailure.title || "作业"}自动处理失败</strong>
-          <span>{latestProcessingFailure.error}</span>
+          <div>
+            <strong>{visibleProcessingFailure.title || "作业"}{visibleProcessingFailure.status === "waiting_for_reconnect" ? "将在服务重连后继续" : "自动处理失败"}</strong>
+            <span>{visibleProcessingFailure.error}</span>
+          </div>
+          <button type="button" aria-label="关闭这条失败提醒" onClick={() => setVisibleProcessingFailure(null)}>×</button>
         </div>
       )}
 
@@ -308,7 +360,6 @@ export function StudentAssignments({ onInitialReady, onOpenWorkbench }: Props) {
       ) : data?.assignments.length === 0 ? (
         <div className="assignment-empty">
           <div className="assignment-empty-illustration" aria-hidden="true"><span /><span /><span /></div>
-          <p className="assignment-center-eyebrow">ASSIGNMENT ARCHIVE</p>
           <h2>暂无作业数据</h2>
           <p>PostgreSQL 已连接。导入作业后会显示为「未批改」；批改完成后更新为「完成批改」。</p>
           <div className="assignment-header-actions">
@@ -327,6 +378,7 @@ export function StudentAssignments({ onInitialReady, onOpenWorkbench }: Props) {
               <select value={status} onChange={(event) => setStatus(event.target.value as "current" | AssignmentStatus)} aria-label="筛选作业状态">
                 <option value="current">当前作业</option>
                 <option value="ungraded">未批改</option>
+                <option value="grading">批改中</option>
                 <option value="draft">草稿</option>
                 <option value="graded">完成批改</option>
                 <option value="archived">已归档</option>
@@ -374,9 +426,14 @@ export function StudentAssignments({ onInitialReady, onOpenWorkbench }: Props) {
             ) : detail ? (
               <>
                 <div className="assignment-detail-heading">
-                  <div><span className={`assignment-status assignment-status-${detail.assignment.status}`}>{STATUS_LABELS[detail.assignment.status]}</span><h2>{detail.assignment.title}</h2><p>{detail.assignment.class_name} · {detail.assignment.item_count} 题 · 满分 {detail.assignment.max_score}</p></div>
+                  <div className="assignment-detail-heading-main">
+                    <h2>{detail.assignment.title}</h2>
+                    <div className="assignment-detail-highlights" aria-label="关键指标">
+                      <p>完成率 <strong>{detail.assignment.completion_rate}%</strong></p>
+                      <p>得分率 <strong>{detail.assignment.average_score == null || !detail.assignment.max_score ? "—" : `${((detail.assignment.average_score / detail.assignment.max_score) * 100).toFixed(1)}%`}</strong></p>
+                    </div>
+                  </div>
                   <div className="assignment-detail-heading-actions">
-                    <dl><div><dt>截止</dt><dd>{formatDate(detail.assignment.due_at, true)}</dd></div><div><dt>完成率</dt><dd>{detail.assignment.completion_rate}%</dd></div><div><dt>平均分</dt><dd>{detail.assignment.average_score ?? "—"}</dd></div></dl>
                     {gradingRuns[detail.assignment.id] && (
                       <button
                         type="button"
@@ -397,24 +454,6 @@ export function StudentAssignments({ onInitialReady, onOpenWorkbench }: Props) {
                   </div>
                 </div>
                 <AssignmentSummary key={detail.assignment.id} assignmentId={detail.assignment.id} />
-                <div className="assignment-student-table-wrap">
-                  <table className="assignment-student-table">
-                    <thead><tr><th>学生</th><th>提交状态</th><th>作答进度</th><th>得分</th><th>正确率</th><th>提交时间</th></tr></thead>
-                    <tbody>
-                      {detail.students.map((student) => (
-                        <tr key={student.id}>
-                          <td><strong>{student.name}</strong><span>{student.student_number || student.group_name || "未设置学号"}</span></td>
-                          <td><span className={`submission-status submission-status-${student.submission_status}`}>{SUBMISSION_LABELS[student.submission_status]}</span></td>
-                          <td>{student.answered_questions}/{student.total_questions}</td>
-                          <td><strong>{student.score == null ? "—" : student.score}</strong><span> / {student.max_score}</span></td>
-                          <td>{student.accuracy == null ? "—" : `${student.accuracy}%`}</td>
-                          <td>{formatDate(student.submitted_at, true)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                  {detail.students.length === 0 && <div className="assignment-no-students">该作业所属班级暂无在读学生。</div>}
-                </div>
                 <footer className="assignment-data-note"><span aria-hidden="true">i</span>页面显示数据库中的客观记录；教师结论与高风险操作仍需人工确认。</footer>
               </>
             ) : (
@@ -433,7 +472,6 @@ export function StudentAssignments({ onInitialReady, onOpenWorkbench }: Props) {
           }}
         >
           <div className="assignment-confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="archive-assignment-title">
-            <p className="assignment-confirm-eyebrow">ARCHIVE</p>
             <h2 id="archive-assignment-title">归档这份作业？</h2>
             <p className="assignment-confirm-lead">{archivePrompt.title}</p>
             <p className="assignment-confirm-copy">归档后当前列表不再显示。记录仍保存在数据库中，可在「已归档」里随时查看。</p>

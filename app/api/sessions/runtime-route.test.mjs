@@ -1,7 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { createJiti } from "jiti";
 
@@ -14,18 +12,16 @@ const jiti = createJiti(import.meta.url, {
   interopDefault: true,
   moduleCache: false,
 });
-const { DELETE: deleteSession, GET: getSessionDetail } = await jiti.import("./[id]/route.ts");
+const { GET: getSessionDetail } = await jiti.import("./[id]/route.ts");
 const { GET: getSessionState } = await jiti.import("./[id]/state/route.ts");
-const {
-  cacheSessionPath,
-  invalidateSessionPathCache,
-} = await jiti.import("../../../lib/session-reader.ts");
 
 test("session listing merges live registry snapshots and honors force refresh", () => {
   assert.match(listRoute, /searchParams\.get\("force"\) === "1"/);
   assert.match(listRoute, /listAllSessions\(\{ force \}\)/);
   assert.match(listRoute, /attachSessionProjectInfo\(getRpcSessionInfos\(\)\)/);
   assert.match(listRoute, /mergeSessionLists\(persistedSessions, runtimeSessions\)/);
+  assert.match(listRoute, /readSessionArchiveIndex\(\)/);
+  assert.match(listRoute, /archivedSessions/);
   assert.match(listRoute, /"Cache-Control": "no-store"/);
 });
 
@@ -47,62 +43,8 @@ test("live agent state is available before the session file is persisted", () =>
   assert.match(stateRoute, /if \(rpc\?\.isAlive\(\)\)/);
 });
 
-test("deleting an intermediate subagent reparents both relation representations", async (t) => {
-  const dir = await mkdtemp(join(tmpdir(), "pi-web-delete-reparent-"));
-  const grandparentPath = join(dir, "grandparent.jsonl");
-  const parentPath = join(dir, "parent.jsonl");
-  const childPath = join(dir, "child.jsonl");
-  const parentId = "delete-reparent-parent";
-  const header = (id, parentSession) => JSON.stringify({
-    type: "session",
-    version: 3,
-    id,
-    timestamp: "2026-01-01T00:00:00.000Z",
-    cwd: dir,
-    ...(parentSession ? { parentSession } : {}),
-  });
-  await writeFile(grandparentPath, `${header("delete-reparent-grandparent")}\n`);
-  await writeFile(parentPath, `${header(parentId, grandparentPath)}\n`);
-  await writeFile(childPath, [
-    header("delete-reparent-child", parentPath),
-    JSON.stringify({
-      type: "custom",
-      customType: "pi-web:subagent",
-      id: "meta",
-      parentId: null,
-      timestamp: "2026-01-01T00:00:00.000Z",
-      data: {
-        version: 1,
-        parentSessionId: parentId,
-        parentSessionPath: parentPath,
-        profile: "Explore",
-        description: "Inspect parser",
-      },
-    }),
-    "",
-  ].join("\n"));
-  cacheSessionPath(parentId, parentPath);
-  t.after(async () => {
-    invalidateSessionPathCache(parentId);
-    await rm(dir, { recursive: true, force: true });
-  });
-
-  const response = await deleteSession(
-    new Request(`http://localhost/api/sessions/${parentId}`, { method: "DELETE" }),
-    { params: Promise.resolve({ id: parentId }) },
-  );
-
-  assert.equal(response.status, 200);
-  await assert.rejects(readFile(parentPath), { code: "ENOENT" });
-  const [childHeaderLine, childMetadataLine] = (await readFile(childPath, "utf8")).trim().split("\n");
-  assert.equal(JSON.parse(childHeaderLine).parentSession, grandparentPath);
-  assert.deepEqual(JSON.parse(childMetadataLine).data, {
-    version: 1,
-    parentSessionId: "delete-reparent-grandparent",
-    parentSessionPath: grandparentPath,
-    profile: "Explore",
-    description: "Inspect parser",
-  });
+test("session deletion endpoint is removed", () => {
+  assert.doesNotMatch(detailRoute, /export async function DELETE/);
 });
 
 test("live detail and state routes work without a persisted JSONL file", async (t) => {

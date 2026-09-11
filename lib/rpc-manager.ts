@@ -164,7 +164,7 @@ export interface RpcSessionStartOptions {
   allowInitialModelFallback?: boolean;
   thinkingLevel?: ThinkingLevel;
   grader?: { assignmentId: string; title: string; studentId?: string; submissionId?: string };
-  evaluator?: { assignmentId: string; title: string; studentId: string; submissionId: string };
+  evaluator?: { assignmentId: string; title: string; studentId: string; submissionId: string; observationUpdatedAt?: string | null };
   summarizer?: SummarizerInfo;
   adapter?: AdapterSessionData;
   persistPreferences?: boolean;
@@ -1934,6 +1934,7 @@ export async function startRpcSession(
       title: evaluator.title,
       studentId: evaluator.studentId,
       submissionId: evaluator.submissionId,
+      observationUpdatedAt: evaluator.observationUpdatedAt,
     } satisfies EvaluatorSessionData);
     sessionManager.appendSessionInfo(`观察：${evaluator.title} · ${evaluator.studentId.slice(0, 8)}`);
   }
@@ -2030,6 +2031,7 @@ export async function startRpcSession(
                       evaluatorAssignmentId: evaluatorInfo.assignmentId,
                       evaluatorStudentId: evaluatorInfo.studentId,
                       evaluatorSubmissionId: evaluatorInfo.submissionId,
+                      evaluatorObservationUpdatedAt: evaluatorInfo.observationUpdatedAt,
                     }
                   : graderInfo
                     ? {
@@ -2099,7 +2101,7 @@ export async function startRpcSession(
     // requested builtin coding tools PLUS all extension/package tools, so installed
     // extensions stay usable in Pi Web just like in the `pi` CLI.
     if (summarizerInfo) {
-      inner.setActiveToolsByName(["read_minerva", "write_minerva"]);
+      inner.setActiveToolsByName(["write_minerva"]);
     } else if (isGrader) {
       inner.setActiveToolsByName([...MINERVA_GRADER_TOOLS]);
     } else if (isEvaluator) {

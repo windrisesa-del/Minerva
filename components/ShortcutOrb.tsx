@@ -29,12 +29,16 @@ interface Props {
   historyLabel: string;
   historyHint: string;
   historyDisabled: boolean;
+  showSessionActions?: boolean;
+  contextActionLabel?: string;
+  contextActionHint?: string;
   openLabel: string;
   closeLabel: string;
   onSetTheme: (preference: ThemePreference, origin: { x: number; y: number }) => void;
   onSetLocale: (locale: string) => void;
   onGenerateTitle: () => void;
   onViewHistory: () => void;
+  onContextAction?: () => void;
 }
 
 type Submenu = "theme" | "language" | null;
@@ -93,6 +97,15 @@ function HistoryGlyph() {
       <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />
       <path d="M3 3v5h5" />
       <path d="M12 7v5l3 2" />
+    </svg>
+  );
+}
+
+function ProcessGlyph() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M3 12s3.5-6 9-6 9 6 9 6-3.5 6-9 6-9-6-9-6Z" />
+      <circle cx="12" cy="12" r="2.5" />
     </svg>
   );
 }
@@ -180,12 +193,16 @@ export function ShortcutOrb({
   historyLabel,
   historyHint,
   historyDisabled,
+  showSessionActions = true,
+  contextActionLabel,
+  contextActionHint,
   openLabel,
   closeLabel,
   onSetTheme,
   onSetLocale,
   onGenerateTitle,
   onViewHistory,
+  onContextAction,
 }: Props) {
   const [open, setOpen] = useState(false);
   const [submenu, setSubmenu] = useState<Submenu>(null);
@@ -373,37 +390,59 @@ export function ShortcutOrb({
               </span>
               <SideChevron end={flyoutEnd} />
             </button>
-            <button
-              type="button"
-              role="menuitem"
-              className={`minerva-shortcut-item${titleError ? " is-error" : ""}${titleSuccess ? " is-success" : ""}`}
-              title={titleHint}
-              disabled={titleDisabled}
-              onClick={onGenerateTitle}
-            >
-              <span className="minerva-shortcut-icon"><TitleGlyph busy={titleBusy} success={titleSuccess} /></span>
-              <span className="minerva-shortcut-copy">
-                <span className="minerva-shortcut-label">{titleLabel}</span>
-                {titleHint !== titleLabel && <span className="minerva-shortcut-hint">{titleHint}</span>}
-              </span>
-            </button>
-            <button
-              type="button"
-              role="menuitem"
-              className="minerva-shortcut-item"
-              title={historyHint}
-              disabled={historyDisabled}
-              onClick={() => {
-                onViewHistory();
-                setOpen(false);
-              }}
-            >
-              <span className="minerva-shortcut-icon"><HistoryGlyph /></span>
-              <span className="minerva-shortcut-copy">
-                <span className="minerva-shortcut-label">{historyLabel}</span>
-                {historyHint !== historyLabel && <span className="minerva-shortcut-hint">{historyHint}</span>}
-              </span>
-            </button>
+            {showSessionActions && (
+              <>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className={`minerva-shortcut-item${titleError ? " is-error" : ""}${titleSuccess ? " is-success" : ""}`}
+                  title={titleHint}
+                  disabled={titleDisabled}
+                  onClick={onGenerateTitle}
+                >
+                  <span className="minerva-shortcut-icon"><TitleGlyph busy={titleBusy} success={titleSuccess} /></span>
+                  <span className="minerva-shortcut-copy">
+                    <span className="minerva-shortcut-label">{titleLabel}</span>
+                    {titleHint !== titleLabel && <span className="minerva-shortcut-hint">{titleHint}</span>}
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="minerva-shortcut-item"
+                  title={historyHint}
+                  disabled={historyDisabled}
+                  onClick={() => {
+                    onViewHistory();
+                    setOpen(false);
+                  }}
+                >
+                  <span className="minerva-shortcut-icon"><HistoryGlyph /></span>
+                  <span className="minerva-shortcut-copy">
+                    <span className="minerva-shortcut-label">{historyLabel}</span>
+                    {historyHint !== historyLabel && <span className="minerva-shortcut-hint">{historyHint}</span>}
+                  </span>
+                </button>
+              </>
+            )}
+            {contextActionLabel && onContextAction && (
+              <button
+                type="button"
+                role="menuitem"
+                className="minerva-shortcut-item"
+                title={contextActionHint ?? contextActionLabel}
+                onClick={() => {
+                  onContextAction();
+                  setOpen(false);
+                }}
+              >
+                <span className="minerva-shortcut-icon"><ProcessGlyph /></span>
+                <span className="minerva-shortcut-copy">
+                  <span className="minerva-shortcut-label">{contextActionLabel}</span>
+                  {contextActionHint && contextActionHint !== contextActionLabel && <span className="minerva-shortcut-hint">{contextActionHint}</span>}
+                </span>
+              </button>
+            )}
           </div>
           {submenu && (
             <div

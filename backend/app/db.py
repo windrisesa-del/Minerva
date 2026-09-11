@@ -27,7 +27,7 @@ def initialize_database() -> None:
         connection.execute(
             text(
                 "ALTER TABLE assignments ADD CONSTRAINT ck_assignment_status "
-                "CHECK (status IN ('draft', 'ungraded', 'graded', 'archived'))"
+                "CHECK (status IN ('draft', 'ungraded', 'grading', 'graded', 'archived'))"
             )
         )
         connection.execute(
@@ -35,6 +35,13 @@ def initialize_database() -> None:
         )
         connection.execute(text("ALTER TABLE grading_results ADD COLUMN IF NOT EXISTS voided_at timestamptz"))
         connection.execute(text("ALTER TABLE grading_results ADD COLUMN IF NOT EXISTS void_note text"))
+        connection.execute(text("ALTER TABLE submissions DROP CONSTRAINT IF EXISTS ck_submission_status"))
+        connection.execute(
+            text(
+                "ALTER TABLE submissions ADD CONSTRAINT ck_submission_status "
+                "CHECK (status IN ('draft', 'submitted', 'grading', 'graded'))"
+            )
+        )
     with SessionLocal.begin() as session:
         teacher = session.scalar(select(Teacher).where(Teacher.name == "本机教师"))
         if teacher is None:

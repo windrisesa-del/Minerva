@@ -2,6 +2,7 @@
 
 # dependencies
 /node_modules
+/.npm-cache/
 /.pnp
 .pnp.*
 .yarn/*
@@ -63,6 +64,10 @@ e2e_*.mjs
 /backend/.runtime/
 /backend/.data/
 /backend/*.log
+/services/wikijs/runtime/
+/services/wikijs/config.yml
+/services/wikijs/api-token.txt
+/services/wikijs/*.log
 __pycache__/
 *.py[cod]
 .pytest_cache/

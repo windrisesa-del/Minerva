@@ -135,7 +135,7 @@ class Assignment(TimestampMixin, Base):
     __tablename__ = "assignments"
     __table_args__ = (
         CheckConstraint(
-            "status IN ('draft', 'ungraded', 'graded', 'archived')",
+            "status IN ('draft', 'ungraded', 'grading', 'graded', 'archived')",
             name="ck_assignment_status",
         ),
     )
@@ -191,7 +191,7 @@ class Submission(TimestampMixin, Base):
         UniqueConstraint(
             "assignment_id", "student_id", "attempt_number", name="uq_submission_attempt"
         ),
-        CheckConstraint("status IN ('draft', 'submitted', 'graded')", name="ck_submission_status"),
+        CheckConstraint("status IN ('draft', 'submitted', 'grading', 'graded')", name="ck_submission_status"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)

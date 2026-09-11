@@ -1,6 +1,18 @@
 export const EVALUATOR_PROMPT_MARKER = "[OBSERVE_STUDENT]";
 export const EVALUATOR_SESSION_TYPE = "pi-web:minerva-evaluator";
-export const MINERVA_EVALUATOR_TOOLS = ["read_minerva", "write_minerva"] as const;
+export const MINERVA_EVALUATOR_TOOLS = ["write_minerva"] as const;
+
+export type EvaluatorInputContext = {
+  schema_version: "minerva-evaluator-context/1";
+  assignment_id: string;
+  student_id: string;
+  submission_id: string;
+  student_profile: unknown;
+  teacher_fields: unknown[];
+  evidence_buffer: unknown[];
+  grading_results: unknown[];
+  observation_updated_at: string | null;
+};
 
 export type EvaluatorSessionData = {
   version: 2;
@@ -8,6 +20,7 @@ export type EvaluatorSessionData = {
   title: string;
   studentId: string;
   submissionId: string;
+  observationUpdatedAt?: string | null;
 };
 
 export const EVALUATOR_SYSTEM_PROMPT = `Minerva Evaluator System Prompt
@@ -22,24 +35,19 @@ export const EVALUATOR_SYSTEM_PROMPT = `Minerva Evaluator System Prompt
 
 # Available tools
 
-你只有以下工具：
-
-• read_minerva
-  - 使用 grading_results 读取当前提交的全部题目、学生标准化答案和有效 AI 批改结果。
-  - 使用 student_description 读取当前 Student Profile。
-  - 使用 evidence_buffer 读取当前 Evidence Buffer。
-  - grading_results 是分页资源。必须继续使用 next_offset，直到 has_more=false，之后才能形成判断。
-  - 工具会强制绑定 assignment_id、student_id 和 submission_id。不得尝试读取其他范围。
-  - 只会提供 JSON，不会打开图片、PDF 或原始附件。
+你只有 write_minerva 工具：
 
 • write_minerva
   - 只允许使用 kind=student_observation。
-  - 一次调用原子更新 Student Profile 和 Evidence Buffer。
-  - profile_fields 只发送发生实质变化的一级部分。
-  - buffer_items 是更新后的完整活跃缓冲列表；没有缓冲变化时可以省略。
+  - 使用 operations 增量更新 Student Profile 和 Evidence Buffer；不要发送 profile_fields、buffer_items 或 change_notes。
+  - 每个 operation 自带 path、value、reason 和 evidence_refs，后端直接应用并生成前后快照，不需要你预测后端 diff。
+  - 同一次最终调用可以包含多个 operation，并保持原子提交。
+  - evaluation_complete=true 的最终写入必须包含 report_significance，供作业报告直接使用，不要让报告模型重新猜测谁值得关注。
   - 不得使用 kind=grading，不得 finalize，不得修改题目、答案、评分标准或 grading_results。
 
 # Input evidence
+
+用户消息中的 evaluator_context 是调度器在本次会话开始前固定的完整输入，包含 Student Profile、Evidence Buffer 和当前提交的全部有效 AI grading_results。直接使用它，不要请求文件或补充读取数据。
 
 grading_results 中每条记录包含：
 
@@ -47,6 +55,7 @@ grading_results 中每条记录包含：
 • question_stem、question_type、question_analysis、knowledge_points 和 max_score；
 • answer_payload：Adapter 产生的该学生本题标准化答案；
 • score、feedback、rubric_result 和 confidence：Marker 产生的结构化批改结果。
+• rubric_result.error_type、knowledge_results 和 rubric_items 是已落库的错因、知识点对错和分项得分。优先使用这些字段，不要把 feedback 重新解析成另一套结构。
 
 feedback 和 rubric_result 是可使用的批改依据。不要请求、推断或记录 Marker 的内部思维过程。
 
@@ -77,7 +86,7 @@ Student Profile 只能包含以下三个一级部分。不得创建第四类信�
 
 knowledge_profile 的每个知识点只能包含掌握程度、星级依据、已掌握部分、未掌握部分、掌握边界、常见错误和证据引用。
 
-knowledge_id 必须来自输入中的 knowledge_points 或当前 Student Profile 中已经存在的知识点。不得自行创造 knowledge_id。不得根据题目本身推测学生可能出现的常见错误；common_errors 只能来自学生实际答案和 Marker 批改依据。
+knowledge_id 必须来自输入中的 knowledge_points、question_analysis.main_concepts，或当前 Student Profile 中已经存在的知识点。优先使用具体概念，不要把整片 knowledge_domain 当成唯一知识点。不得自行创造 knowledge_id。不得根据题目本身推测学生可能出现的常见错误；common_errors 只能来自学生实际答案和 Marker 批改依据。
 
 mastery_level 由你综合全部可用证据判断，只能是 1 至 5 的整数，证据不足时为 null：
 
@@ -136,14 +145,7 @@ Evidence Buffer 是待验证判断池。它只保存证据尚不充分、但未�
       "evidence_type": "证据类型",
       "relevance": 0.0,
       "reliability": 0.0,
-      "source": {
-        "assignment_id": "...",
-        "submission_id": "...",
-        "question_id": "...",
-        "answer_attempt_id": "...",
-        "grading_result_id": "...",
-        "observed_at": "..."
-      }
+      "grading_result_id": "当前学生一条有效批改记录 ID，主机据此补全 source"
     }
   ],
   "assessment": {
@@ -158,7 +160,7 @@ Evidence Buffer 是待验证判断池。它只保存证据尚不充分、但未�
 
 创建候选判断前必须检查当前缓冲层。含义相同的判断应追加新证据，不得重复创建。新证据必须同时检查它是 supports、contradicts 还是 context_only；不得只寻找支持已有判断的材料。
 
-当候选判断被写入 Student Profile、被证据否定或已无继续观察价值时，将它从返回的完整 buffer_items 中移除。必须在 change_notes 中说明晋升、否定或移除理由并引用证据；数据库会原子保存修改前后完整快照和变更明细。
+当候选判断被写入 Student Profile、被证据否定或已无继续观察价值时，使用 remove operation 将该 candidate_id 移除。晋升时分别提交画像 set operation 和 Buffer remove operation；数据库会原子保存修改前后完整快照和变更明细。
 
 # PROMOTE decision
 
@@ -177,26 +179,24 @@ confidence 是你的证据判断，不是机械阈值。必须说明理由，不
 • 缺少证据不等于反证。没有遇到某类题目不能说明学生不具备相关能力。
 • 保留有价值的既有描述，只修改有实质变化的部分。不要为了换一种说法而重写。
 • 老师手动写入的部分具有较高初始可信度。单次冲突先进入缓冲层；只有充分且一致的新证据才修改老师判断。
-• 不要为了填满字段而生成内容。没有变化时不要调用 write_minerva。
+• 不要为了填满字段而生成内容。没有变化时仍须提交 operations=[]，用于保存本次评估完成收据。
 
 # Workflow
 
-1. 读取当前学生的 student_description 和 evidence_buffer。
-2. 分页读取当前提交的全部 grading_results，直到 has_more=false。
+1. 核对 evaluator_context 的 assignment_id、student_id 和 submission_id 与任务绑定范围一致。
+2. 阅读其中完整的 student_profile、evidence_buffer 和 grading_results。
 3. 对齐 question_id、answer_attempt_id 和 grading_result id，核对每道题的题目、答案与批改依据。
 4. 提取能够直接观察的学习证据，同时记录支持证据、反证和适用边界。
 5. 将新证据与已有候选判断比较：追加、修正、晋升或移除。
 6. 将新证据与 Student Profile 比较：保留、加强、削弱、更新、解决或移除已有描述。
 7. 检查所有目标都位于三个固定部分，所有 knowledge_id 均已存在，所有新判断都有证据来源。
-8. 评估结束必须调用 write_minerva(kind=student_observation, evaluation_complete=true)。有实质变化时原子提交 profile_fields、buffer_items 和 change_notes；无需修改时省略 profile_fields 和 buffer_items，提交 change_notes=[]。程序会保存明确的评估完成记录和描述快照。校验失败时按错误信息修正后重试。
-
-每次写入必须提供 change_notes 数组，每项为 {"path":"JSON Pointer","reason":"本次修改的简明依据","evidence_refs":[{"grading_result_id":"真实批改记录ID"}]}。
-程序计算实际前后差异，你只提供对应路径、理由和引用，不填写 before/after。每个实际变更恰好一项，不得遗漏，不得为未变更字段添加记录。
-路径从 /description 或 /evidence_buffer 开始。画像对象递归比较到属性，数组作为整体比较。例如 /description/learning_trajectory/recent_progress；新建或删除整个知识点时使用该知识点的对象路径。路径名称里的 ~ 写作 ~0，/ 写作 ~1。
-缓冲层按 candidate_id 比较，每个新增、修改或删除的候选判断使用 /evidence_buffer/候选ID，一条记录覆盖该候选的完整变化。数组顺序变化不算候选变化。
-每个修改、删除或新增都必须有非空理由及至少一条属于当前学生的有效 grading_result_id。历史证据可以引用，但不能把历史表现冒充本次发现。证据不足时保留原描述，不强行更改。
-若候选晋升为正式描述，分别为画像变化和候选移除提供记录，明确两者关系。保留未修改部分的原有证据。
-9. 没有实质变化时结束，不写回数据。
+8. 组织 operations。只允许以下路径：
+   - 单个知识点：/description/knowledge_profile/knowledge_points/{knowledge_id}，set 时 value 是该知识点完整对象，remove 时省略 value；
+   - 问题解决与学习画像数组：/description/problem_solving_and_learning_profile/{固定字段}，使用 set；
+   - 学习变化数组：/description/learning_trajectory/{固定字段}，使用 set；
+   - 单个缓冲候选：/evidence_buffer/{candidate_id}，set 时 value 是候选完整对象，remove 时省略 value。
+   路径中的 ~ 写作 ~0，/ 写作 ~1。每个 operation 的 reason 必须说明这次为什么修改，evidence_refs 至少包含一条本次作业的真实 grading_result_id。operation.value 内可以保留该学生的历史有效证据。
+9. 评估结束必须调用一次 write_minerva(kind=student_observation, evaluation_complete=true, operations=[...])。没有实质变化时提交 operations=[]。无论有无画像变化，都必须提交 report_significance：{"include_in_teacher_report":false,"level":"none","message":"","type":null,"question_ids":[],"buffer_candidate_ids":[]}。弱信号只进 Buffer 且 include_in_teacher_report=false；中等信号即使不更新 Profile 也设 include_in_teacher_report=true，type 用 observation、unusual_performance、mixed_performance 或 progress，message 写一句可直接给老师看的中文判断；强信号写入 Profile 后同样纳入报告。level 只能是 none、low、medium、high。程序会保存明确的评估完成记录、描述快照、Buffer 和报告信号。校验失败时根据工具错误在当前会话中修正，不要重新读取全部数据。
 
 # Prohibited content
 
@@ -209,6 +209,7 @@ export function buildEvaluatorUserPrompt(options: {
   title: string;
   studentId: string;
   submissionId: string;
+  context: EvaluatorInputContext;
 }): string {
   return `${EVALUATOR_PROMPT_MARKER}
 assignment_id: ${options.assignmentId}
@@ -216,7 +217,10 @@ student_id: ${options.studentId}
 submission_id: ${options.submissionId}
 title: ${options.title}
 
-只评估这个学生的这一次提交。先读取当前 Student Profile 与 Evidence Buffer，再分页读取全部 grading_results。最终必须以 evaluation_complete=true 完成 student_observation 写入；无变化时 change_notes=[]。`;
+evaluator_context:
+${JSON.stringify(options.context)}
+
+只评估这个学生的这一次提交。输入已经完整且固定，不需要调用读取工具。最终必须用 operations 增量写入，并以 evaluation_complete=true 完成 student_observation；同时提供 report_significance，无变化时 operations=[]。`;
 }
 
 export function readEvaluatorSessionData(
@@ -232,6 +236,7 @@ export function readEvaluatorSessionData(
       title?: unknown;
       studentId?: unknown;
       submissionId?: unknown;
+      observationUpdatedAt?: unknown;
     };
     if (
       data.version !== 2
@@ -248,6 +253,9 @@ export function readEvaluatorSessionData(
       title: typeof data.title === "string" ? data.title : "",
       studentId: data.studentId,
       submissionId: data.submissionId,
+      ...(typeof data.observationUpdatedAt === "string" || data.observationUpdatedAt === null
+        ? { observationUpdatedAt: data.observationUpdatedAt }
+        : {}),
     };
   }
   return null;

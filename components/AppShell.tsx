@@ -156,6 +156,8 @@ export function AppShell() {
   const [workbenchAssignmentId, setWorkbenchAssignmentId] = useState<string | null>(() => (
     searchParams.get("view") === "assignments" ? searchParams.get("workbench") : null
   ));
+  const [workbenchProcessVisible, setWorkbenchProcessVisible] = useState(false);
+  const [workbenchProcessAvailable, setWorkbenchProcessAvailable] = useState(false);
   const [modelsRefreshKey, setModelsRefreshKey] = useState(0);
   const [projectTrust, setProjectTrust] = useState<ProjectTrustStatus | null>(null);
   const [projectTrustDialogOpen, setProjectTrustDialogOpen] = useState(false);
@@ -758,6 +760,11 @@ export function AppShell() {
     router.replace(`?view=assignments&workbench=${encodeURIComponent(assignmentId)}`, { scroll: false });
   }, [isMobile, router]);
 
+  useEffect(() => {
+    setWorkbenchProcessVisible(false);
+    setWorkbenchProcessAvailable(false);
+  }, [workbenchAssignmentId]);
+
   // Global keyboard shortcuts (handles Esc, Ctrl+Alt+N etc.)
   useGlobalKeyboardShortcuts({
     onNewSession: (cwd: string) => handleNewSession(`kb-${Date.now()}`, cwd),
@@ -959,7 +966,7 @@ export function AppShell() {
     setInitialSessionRestored(true);
   }, []);
 
-  const handleSessionDeleted = useCallback((sessionId: string) => {
+  const handleSessionArchived = useCallback((sessionId: string) => {
     invalidateWorkspaceRestore();
     setRefreshKey((k) => k + 1);
     if (selectedSession?.id === sessionId) {
@@ -1135,7 +1142,7 @@ export function AppShell() {
         skipInitialProjectSelection={initialNavigation.requestedCwd !== null}
         onInitialRestoreDone={handleInitialRestoreDone}
         refreshKey={refreshKey}
-        onSessionDeleted={handleSessionDeleted}
+        onSessionArchived={handleSessionArchived}
         selectedCwd={selectedSession?.cwd ?? newSessionCwd ?? null}
         onCwdChange={handleCwdChange}
         onOpenFile={handleOpenFile}
@@ -2040,6 +2047,8 @@ export function AppShell() {
               <AssignmentWorkbench
                 assignmentId={workbenchAssignmentId}
                 onBack={handleOpenAssignmentCenter}
+                showProcess={workbenchProcessVisible}
+                onProcessAvailabilityChange={setWorkbenchProcessAvailable}
                 onInitialReady={handleStartupAssignmentCenterReady}
               />
             ) : (
@@ -2119,7 +2128,7 @@ export function AppShell() {
             )
           ) : null}
         </div>
-        <ShortcutOrb
+        {(showChat || Boolean(workbenchAssignmentId)) && <ShortcutOrb
           themeLabel={translate("shortcut.theme")}
           themePreference={preference}
           themeOptions={[
@@ -2139,13 +2148,23 @@ export function AppShell() {
           historyLabel={translate("history.label")}
           historyHint={selectedSession ? translate("history.full") : translate("history.unsaved")}
           historyDisabled={!selectedSession}
+          showSessionActions={showChat}
+          contextActionLabel={workbenchAssignmentId && workbenchProcessAvailable
+            ? translate(workbenchProcessVisible ? "workbench.returnCurrent" : "workbench.viewRawProcess")
+            : undefined}
+          contextActionHint={workbenchAssignmentId && workbenchProcessAvailable
+            ? translate(workbenchProcessVisible ? "workbench.returnCurrentHint" : "workbench.viewRawProcessHint")
+            : undefined}
           openLabel={translate("shortcut.orb")}
           closeLabel={translate("shortcut.close")}
           onSetTheme={setThemePreference}
           onSetLocale={(next) => setLocale(next as typeof locale)}
           onGenerateTitle={() => { void handleAutoName(); }}
           onViewHistory={handleViewFullHistory}
-        />
+          onContextAction={workbenchAssignmentId && workbenchProcessAvailable
+            ? () => setWorkbenchProcessVisible((visible) => !visible)
+            : undefined}
+        />}
       </div>
 
       <div
@@ -2264,6 +2283,7 @@ export function AppShell() {
           setModelsRefreshKey((key) => key + 1);
         }}
         onSessionReloaded={() => setSessionKey((key) => key + 1)}
+        onArchivesChanged={() => setRefreshKey((key) => key + 1)}
       />
     )}
     {projectTrustDialogOpen && projectTrustCwd && (

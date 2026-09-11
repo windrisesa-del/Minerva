@@ -1,24 +1,23 @@
 import { NextResponse } from "next/server";
-import { existsSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "fs";
-import { dirname, join } from "path";
+import { existsSync, statSync, unlinkSync } from "fs";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import {
   attachSessionProjectInfo,
+  listAllSessions,
   resolveSessionPath,
   resolveSessionIdByPath,
-  invalidateSessionPathCache,
   invalidateSessionListCache,
+  invalidateSessionPathCache,
   buildSessionContext,
-  readSessionHeader,
 } from "@/lib/session-reader";
-import { sessionPathKey } from "@/lib/session-path";
 import { getRpcSession } from "@/lib/rpc-manager";
 import { projectTreeForResponse } from "@/lib/project-tree";
 import { computeSessionTotalActiveMs } from "@/lib/session-timing";
 import { computeSessionStats } from "@/lib/session-stats";
 import type { SessionEntry } from "@/lib/types";
-import { readSubagentRun, readSubagentSessionResources, SUBAGENT_META_TYPE } from "@/lib/subagents";
+import { readSubagentRun, readSubagentSessionResources } from "@/lib/subagents";
 import { readSessionToolSelection } from "@/lib/session-tool-selection";
+import { collectSessionFamilyIds, setSessionsArchived } from "@/lib/session-archive-store";
 
 export async function GET(
   req: Request,
@@ -108,14 +107,26 @@ export async function GET(
   }
 }
 
-// PATCH /api/sessions/[id]  body: { name: string }
+// PATCH /api/sessions/[id]  body: { name: string } | { archived: boolean }
 export async function PATCH(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
   try {
-    const { name } = await req.json() as { name?: string };
+    const { name, archived } = await req.json() as { name?: string; archived?: boolean };
+    if (typeof archived === "boolean") {
+      const filePath = await resolveSessionPath(id);
+      if (!filePath) return NextResponse.json({ error: "Session not found" }, { status: 404 });
+      const sessions = await listAllSessions({ force: true });
+      const sessionIds = collectSessionFamilyIds(sessions, id);
+      if (archived && sessionIds.some((sessionId) => getRpcSession(sessionId)?.isRunning())) {
+        return NextResponse.json({ error: "运行中的会话无法归档" }, { status: 409 });
+      }
+      await setSessionsArchived(sessionIds, archived);
+      invalidateSessionListCache();
+      return NextResponse.json({ ok: true, archived, sessionIds });
+    }
     if (typeof name !== "string") {
       return NextResponse.json({ error: "name is required" }, { status: 400 });
     }
@@ -132,7 +143,7 @@ export async function PATCH(
   }
 }
 
-// DELETE /api/sessions/[id]
+// DELETE /api/sessions/[id] — permanently remove the session family from disk
 export async function DELETE(
   _req: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -143,70 +154,27 @@ export async function DELETE(
     if (!filePath) {
       return NextResponse.json({ error: "Session not found" }, { status: 404 });
     }
-
-    // Read only the bounded header before deleting.
-    const parentSessionPath = readSessionHeader(filePath)?.parentSession;
-    const parentSessionId = parentSessionPath
-      ? readSessionHeader(parentSessionPath)?.id
-      : undefined;
-
-    // Re-attach all direct children to this session's parent (cascade re-parent)
-    // Scan sibling files in the same directory
-    const targetPathKey = sessionPathKey(filePath);
-    const dir = dirname(filePath);
-    try {
-      const files = readdirSync(dir).filter(
-        (file) => file.endsWith(".jsonl") && sessionPathKey(join(dir, file)) !== targetPathKey,
-      );
-      for (const file of files) {
-        const childPath = join(dir, file);
-        try {
-          const content = readFileSync(childPath, "utf8");
-          const lines = content.split("\n");
-          const header = JSON.parse(lines[0]) as { type?: string; parentSession?: string };
-          if (
-            header.type === "session" &&
-            header.parentSession &&
-            sessionPathKey(header.parentSession) === targetPathKey
-          ) {
-            // Rewrite header with new parentSession
-            header.parentSession = parentSessionPath;
-            lines[0] = JSON.stringify(header);
-            if (parentSessionPath && parentSessionId) {
-              for (let index = 1; index < lines.length; index += 1) {
-                let entry: { type?: string; customType?: string; data?: unknown };
-                try {
-                  entry = JSON.parse(lines[index]);
-                } catch {
-                  continue;
-                }
-                if (
-                  entry.type !== "custom"
-                  || entry.customType !== SUBAGENT_META_TYPE
-                  || typeof entry.data !== "object"
-                  || entry.data === null
-                  || Array.isArray(entry.data)
-                ) continue;
-                entry.data = {
-                  ...entry.data,
-                  parentSessionId,
-                  parentSessionPath,
-                };
-                lines[index] = JSON.stringify(entry);
-                break;
-              }
-            }
-            writeFileSync(childPath, lines.join("\n"));
-          }
-        } catch { /* skip malformed */ }
+    const sessions = await listAllSessions({ force: true });
+    const sessionIds = collectSessionFamilyIds(sessions, id);
+    if (sessionIds.some((sessionId) => getRpcSession(sessionId)?.isRunning())) {
+      return NextResponse.json({ error: "运行中的会话无法删除" }, { status: 409 });
+    }
+    for (const sessionId of sessionIds) {
+      const rpc = getRpcSession(sessionId);
+      if (rpc?.isAlive()) await rpc.shutdown();
+    }
+    const deletedPaths: string[] = [];
+    for (const sessionId of sessionIds) {
+      const pathToDelete = sessionId === id ? filePath : await resolveSessionPath(sessionId);
+      if (pathToDelete && existsSync(pathToDelete)) {
+        unlinkSync(pathToDelete);
+        deletedPaths.push(pathToDelete);
       }
-    } catch { /* skip if dir unreadable */ }
-
-    await getRpcSession(id)?.shutdown();
-    unlinkSync(filePath);
-    invalidateSessionPathCache(id);
+      invalidateSessionPathCache(sessionId);
+    }
+    await setSessionsArchived(sessionIds, false);
     invalidateSessionListCache();
-    return NextResponse.json({ ok: true });
+    return NextResponse.json({ ok: true, sessionIds, deletedPaths });
   } catch (error) {
     return NextResponse.json({ error: String(error) }, { status: 500 });
   }

@@ -5,14 +5,17 @@ import test from "node:test";
 const source = await readFile(new URL("./SessionSidebar.tsx", import.meta.url), "utf8");
 const sessionItemSource = source.slice(source.indexOf("function SessionItem("));
 
-test("only Shift+click bypasses session deletion confirmation", () => {
-  assert.match(
-    sessionItemSource,
-    /const handleDeleteClick[\s\S]*?if \(e\.shiftKey\) \{\s*void performDelete\(\);\s*\} else \{\s*setConfirmDelete\(true\);/,
-  );
+test("archives sessions from the sidebar without exposing restore there", () => {
+  assert.match(sessionItemSource, /body: JSON\.stringify\(\{ archived: true \}\)/);
+  assert.match(sessionItemSource, /onArchived\?\.\(session\.id\)/);
+  assert.doesNotMatch(sessionItemSource, /onRestored|restoreSession|isArchived/);
+  assert.doesNotMatch(source, /archivedSessionFamilies|archiveOpen/);
+  assert.doesNotMatch(sessionItemSource, /method: "DELETE"/);
 });
 
-test("does not register row-level session deletion shortcuts", () => {
+test("does not expose session deletion controls", () => {
+  assert.doesNotMatch(sessionItemSource, /handleDelete/);
+  assert.doesNotMatch(sessionItemSource, /deleteWithShiftClick/);
   assert.doesNotMatch(sessionItemSource, /const handleKeyDown/);
   assert.doesNotMatch(sessionItemSource, /onKeyDown=\{handleKeyDown\}/);
   assert.doesNotMatch(sessionItemSource, /tabIndex=\{0\}/);
@@ -77,7 +80,7 @@ test("offers the downstream context-menu hook only on a normal session row", () 
   assert.match(sessionItemSource, /const handleContextMenu[\s\S]*?dispatchSessionRowContextMenu\(\{/);
   assert.match(
     sessionItemSource,
-    /onContextMenu=\{confirmDelete \|\| renaming \? undefined : handleContextMenu\}/,
+    /onContextMenu=\{renaming \? undefined : handleContextMenu\}/,
   );
 });
 

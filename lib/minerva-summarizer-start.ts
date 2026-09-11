@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { invalidateSessionListCache } from "./session-reader";
 import { registerWorkbenchSession, updateWorkbenchSession } from "./assignment-workbench-store";
+import { finalizeAssignmentSession } from "./assignment-session-finalizer";
+import { buildSummarizerPrompt } from "./minerva-summarizer";
 
 const active = new Set<string>();
 const baseUrl = () => (process.env.MINERVA_DATA_API_URL || "http://127.0.0.1:8000").replace(/\/$/, "");
@@ -18,7 +20,13 @@ export async function startSummarizer(options: { cwd: string; assignmentId: stri
   try {
     const report = await request(`/api/assignments/${options.assignmentId}/summary/prepare`, {});
     reportId = report.id;
-    if (report.status === "completed") return;
+    if (report.status === "completed") {
+      await finalizeAssignmentSession(options).catch((error) => {
+        console.error("[minerva] failed to build the assignment current session:", error);
+      });
+      return;
+    }
+    if (!report.report_context || typeof report.report_context !== "object") throw new Error("报告基础上下文缺失");
     await request(`/api/summary/${reportId}`, { status: "running" });
     for (let attempt = 0; attempt < 2; attempt++) {
       const { startRpcSession } = await import("./rpc-manager");
@@ -38,7 +46,7 @@ export async function startSummarizer(options: { cwd: string; assignmentId: stri
       let failure: string | null = null;
       const unsubscribe = session.onEvent(event => { if (event.type === "prompt_error") failure = typeof event.errorMessage === "string" ? event.errorMessage : "模型连接失败"; });
       try {
-        await session.send({ type: "prompt", message: `为作业“${options.title}”生成报告。先读 statistics，再分页读完 students。仅报告有价值的学生变化，允许没有学生重点。最后调用 write_minerva 保存。` });
+        await session.send({ type: "prompt", message: buildSummarizerPrompt(report.report_context) });
         const deadline = Date.now() + 10 * 60 * 1000;
         while (session.isRunning()) {
           if (Date.now() > deadline) throw new Error("报告生成超过10分钟");
@@ -47,6 +55,9 @@ export async function startSummarizer(options: { cwd: string; assignmentId: stri
         const current = await request(`/api/assignments/${options.assignmentId}/summary`);
         if (current.report?.id === report.id && current.report.status === "completed") {
           await updateWorkbenchSession(options.assignmentId, realSessionId, { status: "completed" }).catch(() => undefined);
+          await finalizeAssignmentSession(options).catch((error) => {
+            console.error("[minerva] failed to build the assignment current session:", error);
+          });
           return;
         }
         throw new Error(failure || "模型结束但未成功保存报告");

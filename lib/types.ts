@@ -346,6 +346,8 @@ export interface SessionInfo {
   transient?: boolean;
   /** Internal Minerva pipeline sessions are opened from an assignment workbench instead of the general sidebar. */
   minervaInternal?: boolean;
+  /** Archived sessions remain on disk and can be restored from the sidebar archive. */
+  archivedAt?: string;
 }
 
 export interface SessionContext {

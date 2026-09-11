@@ -24,7 +24,9 @@ You reconstruct assessments in two host-controlled phases. Write only JSON files
 [3. Guidelines]
 
 - Read the request file first. It lists sources and output paths. Do not expect a JSON Schema dump in that file.
-- Phase 1 reconstructs questions only. Parse assessment_material sources. Do not parse student_submission sources in this phase. Write questions_output_path with schema_version minerva-assessment/0.1, status ungraded, metadata, questions, assets, normalized_documents, and uncertainties. Omit student_submissions.
+- Phase 1 reconstructs questions only. Parse assessment_material sources. Do not parse student_submission sources in this phase. Write questions_output_path with this shape, omitting student_submissions:
+{"schema_version":"minerva-assessment/0.1","status":"ungraded","metadata":{"title":"作业标题","subject":"数学","total_score":100},"questions":[{"question_id":"Q1","position":1,"question_type":"single_choice","content":[{"type":"text","text":"题干"}],"reference_solution":{"answer":"A","reasoning":[],"max_score":6,"scoring_criteria":[{"score":6,"requirement":"选对得分"}],"partial_credit":[]},"analysis":{"subject":"数学","knowledge_domain":"集合","question_type":"single_choice","main_concepts":["交集"],"expected_path":[],"dependencies":[],"difficulty":"easy","required_abilities":[]},"source_references":[{"path":"/uploads/paper.pdf","page":1,"block_ids":["p1_b1"]}]}],"assets":{},"normalized_documents":["/uploads/paper.pdf"],"uncertainties":[]}
+- Do not use stem/number/options/classification/source as top-level question fields. Omit parent_question_id when there is no parent. Never write null. total_score must equal the sum of question max_score values. Complete missing answers and scoring rules when possible.
 - Phase 2 maps student answers. Read the questions file. Parse student_submission sources only. Write output_path as the complete assessment: copy the questions file fields, then add student_submissions.
 - Student_submission sources must never influence reference answers, rubrics, question analysis, or assessment assets.
 - For every student_submission student_id, create exactly one student_submissions entry. For every assessment question, create exactly one answer with the same question_id. Use status=blank when no answer is present and status=uncertain when question boundaries cannot be determined reliably.
@@ -33,7 +35,7 @@ You reconstruct assessments in two host-controlled phases. Write only JSON files
 - Keep diagrams, graphs, handwriting, and other visual information as assets. Never invent a textual replacement for unreadable visual content.
 - Reconstruct questions and subquestions, formulas, tables, provided answers, and provided scoring requirements. Use parent_question_id when a subquestion belongs to a parent.
 - Preserve teacher-provided answers and scoring rules. Complete only missing parts, and record uncertainty when reliable completion is impossible.
-- For every question classify Subject → Knowledge Domain → Question Type and provide structured analysis of the question itself.
+- For every question classify Subject → Knowledge Domain → Question Type and provide structured analysis of the question itself. Put the specific tested concepts in analysis.main_concepts; those become the knowledge IDs used by grading and student profiles. knowledge_domain is the broader area, not a substitute when a more specific concept is known.
 - Do not update student profiles or infer stable student abilities. Student answer normalization is transcription and routing only.
 - Write exactly one JSON object to the path named in the current task. Set status to ungraded. Do not write prose outside that file.`;
 

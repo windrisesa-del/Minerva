@@ -7,6 +7,15 @@ const STORE_PATH = process.env.MINERVA_WORKBENCH_STORE_PATH
 
 export type WorkbenchRole = "adapter" | "marker" | "evaluator" | "summarizer";
 export type WorkbenchSessionStatus = "running" | "completed" | "failed";
+export type WorkbenchCurrentSessionStatus = "building" | "ready" | "failed";
+
+export interface WorkbenchCurrentSession {
+  sessionId: string;
+  status: WorkbenchCurrentSessionStatus;
+  compacted: boolean;
+  createdAt: string;
+  error?: string;
+}
 
 export interface WorkbenchSessionEntry {
   sessionId: string;
@@ -16,6 +25,9 @@ export interface WorkbenchSessionEntry {
   status: WorkbenchSessionStatus;
   studentId?: string;
   submissionId?: string;
+  groupId?: string;
+  agentIndex?: number;
+  attempt?: number;
   error?: string;
 }
 
@@ -24,6 +36,9 @@ export interface AssignmentWorkbenchRecord {
   title: string;
   createdAt: string;
   updatedAt: string;
+  archivedAt?: string;
+  customTitle?: boolean;
+  currentSession?: WorkbenchCurrentSession;
   sessions: WorkbenchSessionEntry[];
 }
 
@@ -51,16 +66,46 @@ function validateStore(value: unknown): WorkbenchStore {
       && typeof entry.label === "string"
       && typeof entry.startedAt === "string"
       && ["running", "completed", "failed"].includes(entry.status)
-    ));
+    )).map((entry) => ({
+      ...entry,
+      ...(typeof entry.groupId === "string" ? { groupId: entry.groupId } : {}),
+      ...(typeof entry.agentIndex === "number" ? { agentIndex: entry.agentIndex } : {}),
+      ...(typeof entry.attempt === "number" ? { attempt: entry.attempt } : {}),
+    }));
     workbenches[assignmentId] = {
       assignmentId,
       title: typeof raw.title === "string" ? raw.title : "",
       createdAt: typeof raw.createdAt === "string" ? raw.createdAt : new Date().toISOString(),
       updatedAt: typeof raw.updatedAt === "string" ? raw.updatedAt : new Date().toISOString(),
+      archivedAt: typeof raw.archivedAt === "string" ? raw.archivedAt : undefined,
+      customTitle: raw.customTitle === true,
+      currentSession: raw.currentSession
+        && typeof raw.currentSession.sessionId === "string"
+        && ["building", "ready", "failed"].includes(raw.currentSession.status)
+        ? {
+            sessionId: raw.currentSession.sessionId,
+            status: raw.currentSession.status,
+            compacted: raw.currentSession.compacted === true,
+            createdAt: typeof raw.currentSession.createdAt === "string" ? raw.currentSession.createdAt : new Date().toISOString(),
+            error: typeof raw.currentSession.error === "string" ? raw.currentSession.error : undefined,
+          }
+        : undefined,
       sessions,
     };
   }
   return { version: 1, workbenches };
+}
+
+export async function setWorkbenchCurrentSession(
+  assignmentId: string,
+  currentSession: WorkbenchCurrentSession,
+): Promise<void> {
+  await mutateStore((store) => {
+    const workbench = store.workbenches[assignmentId];
+    if (!workbench) return;
+    workbench.currentSession = currentSession;
+    workbench.updatedAt = new Date().toISOString();
+  });
 }
 
 async function readStore(): Promise<WorkbenchStore> {
@@ -103,6 +148,26 @@ export async function readAssignmentWorkbenches(): Promise<AssignmentWorkbenchRe
   return Object.values((await readStore()).workbenches);
 }
 
+export async function updateAssignmentWorkbench(
+  assignmentId: string,
+  patch: { title?: string; archived?: boolean },
+): Promise<AssignmentWorkbenchRecord | null> {
+  return mutateStore((store) => {
+    const workbench = store.workbenches[assignmentId];
+    if (!workbench) return null;
+    const now = new Date().toISOString();
+    if (patch.title !== undefined) {
+      workbench.title = patch.title;
+      workbench.customTitle = true;
+    }
+    if (patch.archived !== undefined) {
+      workbench.archivedAt = patch.archived ? now : undefined;
+    }
+    workbench.updatedAt = now;
+    return structuredClone(workbench);
+  });
+}
+
 export async function registerWorkbenchSession(options: {
   assignmentId: string;
   title: string;
@@ -125,7 +190,8 @@ export async function registerWorkbenchSession(options: {
     const index = current.sessions.findIndex((item) => item.sessionId === entry.sessionId);
     if (index >= 0) current.sessions[index] = { ...current.sessions[index], ...entry };
     else current.sessions.push(entry);
-    current.title = options.title || current.title;
+    if (!current.customTitle) current.title = options.title || current.title;
+    if (entry.status === "running") current.archivedAt = undefined;
     current.updatedAt = now;
     store.workbenches[options.assignmentId] = current;
     return structuredClone(current);

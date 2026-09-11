@@ -53,6 +53,15 @@ interface Props {
   playDoneSound?: () => void;
   unlockAudio?: () => void;
   onInitialReady?: () => void;
+  /** Keep bootstrap/imported history in the model context without rendering it in the chat. */
+  hideHistoryThroughAssistantText?: string;
+}
+
+function assistantMessageContains(message: AgentMessage, text: string): boolean {
+  if (message.role !== "assistant") return false;
+  const content = (message as AssistantMessage).content;
+  if (typeof content === "string") return content.includes(text);
+  return content.some((block) => block.type === "text" && block.text.includes(text));
 }
 
 function phaseLabel(phase: AgentPhase, t: (key: string, params?: Record<string, string | number>) => string): string | null {
@@ -254,7 +263,7 @@ function ProcessDetailsGroup({ messageCount, toolCallCount, defaultExpanded = fa
   );
 }
 
-export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionDraftKey, onAgentEnd, onAttentionNeeded, onSessionCreated, onSessionForked, modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSystemToolsChange, onSystemInfoLoaderChange, onSessionStatsChange, onSessionStatsPanelOpen, onContextUsageChange, onOpenFile, onOpenSession, soundEnabled = true, onSoundToggle, playDoneSound = () => {}, unlockAudio, onInitialReady }: Props) {
+export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionDraftKey, onAgentEnd, onAttentionNeeded, onSessionCreated, onSessionForked, modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSystemToolsChange, onSystemInfoLoaderChange, onSessionStatsChange, onSessionStatsPanelOpen, onContextUsageChange, onOpenFile, onOpenSession, soundEnabled = true, onSoundToggle, playDoneSound = () => {}, unlockAudio, onInitialReady, hideHistoryThroughAssistantText }: Props) {
   const { t } = useI18n();
   const isMobile = useIsMobile();
   const completionNotificationsEnabled = session?.relation?.kind !== "subagent";
@@ -302,6 +311,16 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
     session, sessionRunning, newSessionCwd, newSessionDraftKey, onAgentEnd: wrappedOnAgentEnd, onAttentionNeeded, onSessionCreated, onSessionForked,
     modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSystemToolsChange, onSystemInfoLoaderChange, onSessionStatsPanelOpen,
   });
+  const hiddenHistoryEnd = useMemo(() => {
+    if (!hideHistoryThroughAssistantText) return 0;
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      if (assistantMessageContains(messages[index], hideHistoryThroughAssistantText)) return index + 1;
+    }
+    return 0;
+  }, [hideHistoryThroughAssistantText, messages]);
+  const renderMessages = useMemo(() => messages.slice(hiddenHistoryEnd), [hiddenHistoryEnd, messages]);
+  const renderEntryIds = useMemo(() => entryIds.slice(hiddenHistoryEnd), [entryIds, hiddenHistoryEnd]);
+  const renderHasEarlierMessages = hiddenHistoryEnd === 0 && hasEarlierMessages;
   const sessionBusy = agentRunning || bashRunning;
   const initialReadyReportedRef = useRef(false);
 
@@ -366,7 +385,7 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
         // and prepend it (loadContext handles prepend + scroll anchoring).
         // Skip while a page is already loading or nothing older exists.
         if (loadingOlderRef.current) return;
-        if (!hasEarlierMessages) return;
+        if (!renderHasEarlierMessages) return;
         const oldestId = historyCursor;
         if (!oldestId) return;
         const sid = session?.id ?? sessionIdRef.current;
@@ -381,13 +400,13 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
     );
     observer.observe(sentinel);
     return () => observer.disconnect();
-  }, [historyCursor, hasEarlierMessages, session, activeLeafId, loadContext, sessionIdRef, scrollContainerRef]);
+  }, [historyCursor, renderHasEarlierMessages, session, activeLeafId, loadContext, sessionIdRef, scrollContainerRef]);
 
   // Keep the rendered window at least as large as what's loaded, so prepended
   // (older) pages stay visible instead of being sliced off the top.
   useEffect(() => {
-    setVisibleCount((current) => Math.max(current, messages.length));
-  }, [messages.length]);
+    setVisibleCount((current) => Math.max(current, renderMessages.length));
+  }, [renderMessages.length]);
 
   // After visibleCount increases (more messages prepended), restore the
   // scroll position so the viewport doesn't jump.
@@ -443,36 +462,36 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
 
   const { isDragOver, handleDragEnter, handleDragOver, handleDragLeave, handleDrop } = useDragDrop(onDrop);
 
-  const visibleMessages = messages.filter((m) => m.role === "user" || m.role === "assistant");
+  const visibleMessages = renderMessages.filter((m) => m.role === "user" || m.role === "assistant");
   // Stable Map identity: `messages` doesn't change during streaming updates
   // (the streaming message lives in streamState), so memoized MessageViews
   // skip re-rendering on every message_update event. An inline `new Map()`
   // here used to defeat MessageView's memo() on each streamed chunk.
   const toolResultsMap = useMemo(() => {
     const map = new Map<string, ToolResultMessage>();
-    for (const msg of messages) {
+    for (const msg of renderMessages) {
       if (msg.role === "toolResult") {
         map.set((msg as ToolResultMessage).toolCallId, msg as ToolResultMessage);
       }
     }
     return map;
-  }, [messages]);
+  }, [renderMessages]);
   const inputHistory = useMemo(() => {
     const seen = new Set<string>();
     const history: string[] = [];
-    for (let i = messages.length - 1; i >= 0; i -= 1) {
-      const text = getUserInputText(messages[i]);
+    for (let i = renderMessages.length - 1; i >= 0; i -= 1) {
+      const text = getUserInputText(renderMessages[i]);
       if (!text || seen.has(text)) continue;
       seen.add(text);
       history.push(text);
       if (history.length >= 50) break;
     }
     return history.reverse();
-  }, [messages]);
+  }, [renderMessages]);
   const messageRefs = useMessageRefs(visibleMessages.length);
   const revealHistoryForMinimap = useCallback(() => {
-    setVisibleCount((current) => Math.max(current, messages.length * 2));
-  }, [messages.length]);
+    setVisibleCount((current) => Math.max(current, renderMessages.length * 2));
+  }, [renderMessages.length]);
 
   const isEmptyNew = isNew && messages.length === 0 && !streamState.isStreaming && !sessionBusy;
   const hasStreamingContent = Boolean(streamState.streamingMessage?.content.length);
@@ -566,7 +585,7 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
   }, [
     agentRunning,
     lastUserMsgRef,
-    messages.length,
+    renderMessages.length,
     promptAnchorActive,
     scrollContainerRef,
     scrollUserMsgToTop,
@@ -757,8 +776,8 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
             <div ref={messageContentRef} style={{ width: "100%", minWidth: 0, maxWidth: 820, margin: "0 auto" }}>
             {(() => {
               let lastUserIdx = -1;
-              for (let i = messages.length - 1; i >= 0; i--) {
-                if (messages[i].role === "user") { lastUserIdx = i; break; }
+              for (let i = renderMessages.length - 1; i >= 0; i--) {
+                if (renderMessages[i].role === "user") { lastUserIdx = i; break; }
               }
               // Anchor for live-tail detection: the last user message, or a
               // compaction summary when compaction has replaced it mid-turn.
@@ -766,13 +785,13 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
               // scroll-to-user ref) because a compaction summary can sit after
               // the last user message and anchor the still-streaming segment.
               let lastAnchorIdx = -1;
-              for (let i = messages.length - 1; i >= 0; i--) {
-                if (isGroupAnchor(messages[i])) { lastAnchorIdx = i; break; }
+              for (let i = renderMessages.length - 1; i >= 0; i--) {
+                if (isGroupAnchor(renderMessages[i])) { lastAnchorIdx = i; break; }
               }
 
               const visibleRefIndexByMessage = new Map<number, number>();
               let refIdx = 0;
-              messages.forEach((msg, idx) => {
+              renderMessages.forEach((msg, idx) => {
                 if (msg.role === "user" || msg.role === "assistant") {
                   visibleRefIndexByMessage.set(idx, refIdx++);
                 }
@@ -784,10 +803,10 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
               };
 
               const renderMessage = (idx: number, options: { attachRef?: boolean; keyPrefix?: string; messageOverride?: AgentMessage; showTimestamp?: boolean; writtenFiles?: WrittenFile[] } = {}): ReactNode => {
-                const msg = options.messageOverride ?? messages[idx];
+                const msg = options.messageOverride ?? renderMessages[idx];
                 const prevAssistantEntryId =
-                  msg.role === "user" && idx > 0 && messages[idx - 1].role === "assistant"
-                    ? entryIds[idx - 1]
+                  msg.role === "user" && idx > 0 && renderMessages[idx - 1].role === "assistant"
+                    ? renderEntryIds[idx - 1]
                     : undefined;
                 const isVisible = msg.role === "user" || msg.role === "assistant";
                 const currentRefIdx = visibleRefIndexByMessage.get(idx);
@@ -795,13 +814,13 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
                 let showTimestamp = false;
                 if (msg.role === "assistant") {
                   showTimestamp = true;
-                  for (let j = idx + 1; j < messages.length; j++) {
-                    const r = messages[j].role;
+                  for (let j = idx + 1; j < renderMessages.length; j++) {
+                    const r = renderMessages[j].role;
                     if (r === "user") break;
                     if (r === "assistant") { showTimestamp = false; break; }
                   }
                   // Hide on the currently-streaming tail (the streaming bubble owns the live timestamp)
-                  if (showTimestamp && streamState.isStreaming && idx === messages.length - 1) {
+                  if (showTimestamp && streamState.isStreaming && idx === renderMessages.length - 1) {
                     showTimestamp = false;
                   }
                 }
@@ -815,14 +834,14 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
                     cwd={messageCwd}
                     onOpenFile={onOpenFile}
                     onOpenSession={onOpenSession}
-                    entryId={entryIds[idx]}
+                    entryId={renderEntryIds[idx]}
                     onFork={sessionBusy || isNew || (idx === 0 && msg.role === "user") ? undefined : handleFork}
-                    forking={forkingEntryId === entryIds[idx]}
+                    forking={forkingEntryId === renderEntryIds[idx]}
                     onNavigate={sessionBusy ? undefined : handleNavigate}
                     prevAssistantEntryId={sessionBusy ? undefined : prevAssistantEntryId}
                     onEditContent={handleEditContent}
                     showTimestamp={showTimestamp}
-                    prevTimestamp={idx > 0 ? (messages[idx - 1] as AgentMessage & { timestamp?: number }).timestamp : undefined}
+                    prevTimestamp={idx > 0 ? (renderMessages[idx - 1] as AgentMessage & { timestamp?: number }).timestamp : undefined}
                     sessionId={session?.id ?? sessionIdRef.current ?? undefined}
                     writtenFiles={options.writtenFiles}
                   />
@@ -836,8 +855,8 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
               };
 
               const rendered: ReactNode[] = [];
-              for (let idx = 0; idx < messages.length;) {
-                const msg = messages[idx];
+              for (let idx = 0; idx < renderMessages.length;) {
+                const msg = renderMessages[idx];
                 if (!isGroupAnchor(msg)) {
                   rendered.push(renderMessage(idx));
                   idx += 1;
@@ -846,9 +865,9 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
 
                 const userIdx = idx;
                 let endIdx = userIdx + 1;
-                while (endIdx < messages.length && !isGroupAnchor(messages[endIdx])) endIdx += 1;
+                while (endIdx < renderMessages.length && !isGroupAnchor(renderMessages[endIdx])) endIdx += 1;
 
-                const finalAssistantIdx = findFinalAssistantIndex(messages, userIdx, endIdx);
+                const finalAssistantIdx = findFinalAssistantIndex(renderMessages, userIdx, endIdx);
 
                 if (finalAssistantIdx === -1) {
                   for (let renderIdx = userIdx; renderIdx < endIdx; renderIdx++) {
@@ -858,7 +877,7 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
                   continue;
                 }
 
-                const isLiveTail = (sessionBusy || streamState.isStreaming) && endIdx === messages.length && userIdx === lastAnchorIdx;
+                const isLiveTail = (sessionBusy || streamState.isStreaming) && endIdx === renderMessages.length && userIdx === lastAnchorIdx;
                 if (isLiveTail) {
                   for (let renderIdx = userIdx; renderIdx < endIdx; renderIdx++) {
                     rendered.push(renderMessage(renderIdx));
@@ -873,8 +892,8 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
                 for (let processIdx = userIdx + 1; processIdx < finalAssistantIdx; processIdx++) {
                   processIndices.push(processIdx);
                 }
-                const visibleProcessIndices = processIndices.filter((processIdx) => hasDisplayableProcessMessage(messages[processIdx]));
-                const finalAssistant = messages[finalAssistantIdx] as AssistantMessage;
+                const visibleProcessIndices = processIndices.filter((processIdx) => hasDisplayableProcessMessage(renderMessages[processIdx]));
+                const finalAssistant = renderMessages[finalAssistantIdx] as AssistantMessage;
                 const finalSplit = splitFinalAssistantBlocks(finalAssistant);
                 const finalProcessMessage = finalSplit.processBlocks.length > 0
                   ? withAssistantBlocks(finalAssistant, finalSplit.processBlocks, { omitUsage: true })
@@ -894,7 +913,7 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
                       messageCount={processCount}
                       defaultExpanded={!finalAnswerMessage}
                       t={t}
-                      toolCallCount={countToolCalls(messages, visibleProcessIndices) + countToolCallBlocks(finalSplit.processBlocks)}
+                      toolCallCount={countToolCalls(renderMessages, visibleProcessIndices) + countToolCallBlocks(finalSplit.processBlocks)}
                     >
                       {visibleProcessIndices.map((processIdx) => renderMessage(processIdx, { attachRef: false, keyPrefix: "process" }))}
                       {finalProcessMessage && renderMessage(finalAssistantIdx, { attachRef: false, keyPrefix: "process-final", messageOverride: finalProcessMessage, showTimestamp: false })}
@@ -917,7 +936,7 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
                   // from the write/edit calls among them.
                   const turnContent: AssistantContentBlock[] = [];
                   for (let i = userIdx + 1; i <= finalAssistantIdx; i++) {
-                    const m = messages[i];
+                    const m = renderMessages[i];
                     if (m?.role === "assistant") {
                       for (const b of (m as AssistantMessage).content ?? []) turnContent.push(b);
                     }
@@ -931,7 +950,7 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
                 idx = endIdx;
               }
               const { startIndex } = getVisibleRenderWindow(rendered.length, visibleCount);
-              const hasMore = startIndex > 0 || hasEarlierMessages;
+              const hasMore = startIndex > 0 || renderHasEarlierMessages;
               return (
                 <>
                   {hasMore && (
@@ -980,7 +999,7 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
         </div>
         {isMobile ? null : (
           <ChatMinimap
-            messages={messages}
+            messages={renderMessages}
             streamingMessage={streamState.streamingMessage}
             scrollContainer={scrollContainerRef}
             messageRefs={messageRefs}

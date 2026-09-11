@@ -14,6 +14,7 @@ import {
   validateAssessment,
   validateAssessmentStudentCoverage,
   validateQuestionsDraft,
+  parseAdapterJsonText,
   type MinervaAssessment,
 } from "./minerva-adapter-schema";
 import { startGradingSession } from "./minerva-grading-start";
@@ -55,8 +56,11 @@ async function discardImportedAssignment(assignmentId: string): Promise<void> {
 async function readCompleteJsonFile(outputPath: string): Promise<string | null> {
   try {
     const text = await readFile(outputPath, "utf8");
-    JSON.parse(text);
-    return text;
+    const complete = parseAdapterJsonText(text);
+    if (complete !== text.trim()) {
+      await writeFile(outputPath, `${complete}\n`, "utf8");
+    }
+    return complete;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
     if (error instanceof SyntaxError) return null;
@@ -90,6 +94,12 @@ async function waitForAdapterOutput(
       return text;
     }
     if (!session.isRunning()) {
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, 100));
+      const finalText = await readCompleteJsonFile(outputPath);
+      if (finalText) return finalText;
+      if (existsSync(outputPath)) {
+        throw new Error(`Adapter ${label} ended with an invalid JSON file`);
+      }
       throw new Error(`Adapter ${label} ended without writing a complete JSON file`);
     }
     await new Promise((resolveDelay) => setTimeout(resolveDelay, 250));

@@ -143,6 +143,11 @@ def test_normalized_assessment_persists_as_ungraded_and_rebuilds_questions() -> 
             detail = client.get(f"/api/assignments/{assignment_id}").json()
             assert detail["assignment"]["item_count"] == 1
             assert detail["assignment"]["max_score"] == 10
+            items = client.get(
+                "/api/minerva/read",
+                params={"resource": "assignment_items", "assignment_id": assignment_id},
+            ).json()["records"]
+            assert items[0]["question_snapshot"]["knowledge_points"] == ["整数加法"]
             question_id = client.get(
                 "/api/minerva/read",
                 params={"resource": "questions", "assignment_id": assignment_id},

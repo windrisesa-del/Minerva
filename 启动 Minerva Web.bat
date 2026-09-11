@@ -5,6 +5,7 @@ set "ROOT_DIR=%~dp0"
 set "WEB_DIR=%ROOT_DIR%"
 set "BACKEND_DIR=%WEB_DIR%backend"
 set "ENSURE_SCRIPT=%BACKEND_DIR%\scripts\ensure_data_api.ps1"
+set "WIKI_ENSURE_SCRIPT=%WEB_DIR%services\wikijs\ensure.ps1"
 set "WEB_URL=http://127.0.0.1:30141"
 set "NODE_EXE=C:\Program Files\nodejs\node.exe"
 set "NPM_CLI=C:\Program Files\nodejs\node_modules\npm\bin\npm-cli.js"
@@ -37,6 +38,7 @@ if /i "%~1"=="--check" (
     echo Backend directory: %BACKEND_DIR%
     echo Web URL: %WEB_URL%
     echo Data API docs: http://127.0.0.1:8000/docs
+    echo Wiki.js URL: http://127.0.0.1:3002/
     exit /b 0
 )
 
@@ -47,6 +49,12 @@ if errorlevel 1 (
     echo Student assignment views need this service.
     pause
     exit /b 1
+)
+
+if exist "%WIKI_ENSURE_SCRIPT%" (
+    echo [Minerva] Ensuring local Wiki.js...
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%WIKI_ENSURE_SCRIPT%"
+    if errorlevel 1 echo [Minerva] Wiki.js is unavailable; student graphs will use Minerva profile data only.
 )
 
 powershell.exe -NoProfile -Command "if (Get-NetTCPConnection -State Listen -LocalPort 30141 -ErrorAction SilentlyContinue) { exit 0 } else { exit 1 }"

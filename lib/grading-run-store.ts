@@ -9,11 +9,12 @@ export interface GradingRunRecord {
   sessionId: string;
   title: string;
   startedAt: string;
-  status?: "running" | "completed" | "failed";
+  status?: "running" | "completed" | "failed" | "waiting_for_reconnect" | "archived";
   completedStudents?: number;
   totalStudents?: number;
   error?: string;
   failedAt?: string;
+  hostPid?: number;
 }
 
 interface GradingRunStore {
@@ -39,11 +40,14 @@ function validateStore(value: unknown): GradingRunStore {
       sessionId: run.sessionId,
       title: typeof run.title === "string" ? run.title : "",
       startedAt: typeof run.startedAt === "string" ? run.startedAt : new Date().toISOString(),
-      status: run.status === "running" || run.status === "failed" ? run.status : "completed",
+      status: run.status === "running" || run.status === "failed" || run.status === "waiting_for_reconnect" || run.status === "archived"
+        ? run.status
+        : "completed",
       completedStudents: typeof run.completedStudents === "number" ? run.completedStudents : 0,
       totalStudents: typeof run.totalStudents === "number" ? run.totalStudents : 0,
       ...(typeof run.error === "string" ? { error: run.error } : {}),
       ...(typeof run.failedAt === "string" ? { failedAt: run.failedAt } : {}),
+      ...(typeof run.hostPid === "number" ? { hostPid: run.hostPid } : {}),
     };
   }
   return { version: 1, runs };
@@ -74,7 +78,7 @@ export async function upsertGradingRun(run: GradingRunRecord): Promise<GradingRu
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       }
-      store.runs[run.assignmentId] = run;
+      store.runs[run.assignmentId] = { ...run, hostPid: run.hostPid ?? process.pid };
       await mkdir(dirname(STORE_PATH), { recursive: true });
       const temporaryPath = `${STORE_PATH}.${process.pid}.${Date.now()}.tmp`;
       await writeFile(temporaryPath, `${JSON.stringify(store, null, 2)}\n`, "utf8");

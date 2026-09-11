@@ -9,6 +9,7 @@ const sidebarSource = await readFile(new URL("./SessionSidebar.tsx", import.meta
 const themeSource = await readFile(new URL("../hooks/useTheme.ts", import.meta.url), "utf8");
 const enSource = await readFile(new URL("../lib/i18n/messages/en.ts", import.meta.url), "utf8");
 const zhSource = await readFile(new URL("../lib/i18n/messages/zh-CN.ts", import.meta.url), "utf8");
+const archivesSource = await readFile(new URL("./ArchivedItemsSettings.tsx", import.meta.url), "utf8");
 
 test("opens one settings panel from direct sidebar shortcuts", () => {
   assert.match(shellSource, /<SettingsPanel/);
@@ -22,7 +23,7 @@ test("opens one settings panel from direct sidebar shortcuts", () => {
 });
 
 test("keeps enabled configuration surfaces inside the settings panel", () => {
-  for (const section of ["general", "system", "tools", "models", "skills", "plugins"]) {
+  for (const section of ["general", "archives", "system", "tools", "models", "skills", "plugins"]) {
     assert.match(panelSource, new RegExp(`id: "${section}"`));
   }
   for (const component of ["ModelsConfig", "SkillsConfig", "PluginsConfig"]) {
@@ -30,8 +31,22 @@ test("keeps enabled configuration surfaces inside the settings panel", () => {
   }
   assert.match(panelSource, /<SystemPromptPanel /);
   assert.match(panelSource, /<ToolDefinitionsPanel /);
+  assert.match(panelSource, /<ArchivedItemsSettings onChanged=\{onArchivesChanged\} \/>/);
   assert.match(panelSource, /onRequestSystemInfo\(\)/);
   assert.doesNotMatch(panelSource, /id: "agents"|<AgentsConfig embedded/);
+});
+
+test("restores chats and grading workbenches only from the separate Archives settings section", () => {
+  assert.match(archivesSource, /settings\.archivedChats/);
+  assert.match(archivesSource, /settings\.archivedWorkbenches/);
+  assert.match(archivesSource, /\/api\/sessions\/\$\{encodeURIComponent\(sessionId\)\}/);
+  assert.match(archivesSource, /\/api\/assignment-workbench\?assignment_id=/);
+  assert.match(archivesSource, /JSON\.stringify\(\{ archived: false \}\)/);
+  assert.match(archivesSource, /const DEFAULT_VISIBLE_COUNT = 6/);
+  assert.match(archivesSource, /sessions\.slice\(0, DEFAULT_VISIBLE_COUNT\)/);
+  assert.match(archivesSource, /workbenches\.slice\(0, DEFAULT_VISIBLE_COUNT\)/);
+  assert.match(archivesSource, /settings\.expandArchives/);
+  assert.doesNotMatch(sidebarSource, /archivedSessionFamilies|archivedAssignmentWorkbenches/);
 });
 
 test("restores the settings section and each list detail selection", async () => {

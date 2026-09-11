@@ -3,6 +3,10 @@ $backendRoot = Split-Path -Parent $PSScriptRoot
 $env:UV_CACHE_DIR = Join-Path $backendRoot ".uv-cache"
 $env:UV_PYTHON_INSTALL_DIR = Join-Path $backendRoot ".runtime\python"
 $env:DATABASE_URL = "postgresql+psycopg://minerva@127.0.0.1:5432/minerva"
+$wikiTokenPath = Join-Path (Split-Path -Parent $backendRoot) "services\wikijs\api-token.txt"
+if (-not $env:WIKIJS_API_TOKEN -and (Test-Path -LiteralPath $wikiTokenPath)) {
+  $env:WIKIJS_API_TOKEN = (Get-Content -LiteralPath $wikiTokenPath -Raw).Trim()
+}
 $python = Join-Path $backendRoot ".venv\Scripts\python.exe"
 
 if (-not (Test-Path -LiteralPath $python)) {

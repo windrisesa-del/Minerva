@@ -1,5 +1,5 @@
-export type AssignmentStatus = "draft" | "ungraded" | "graded" | "archived";
-export type SubmissionStatus = "not_started" | "draft" | "submitted" | "graded";
+export type AssignmentStatus = "draft" | "ungraded" | "grading" | "graded" | "archived";
+export type SubmissionStatus = "not_started" | "draft" | "submitted" | "grading" | "graded";
 
 export interface AssignmentSummary {
   id: string;
@@ -86,7 +86,7 @@ export interface GradingRun {
   title: string;
   startedAt: string;
   running: boolean;
-  status?: "running" | "completed" | "failed";
+  status?: "running" | "completed" | "failed" | "waiting_for_reconnect" | "archived";
   completedStudents?: number;
   totalStudents?: number;
   error?: string;

@@ -902,6 +902,118 @@
   overflow-y: auto;
 }
 
+.settings-archives {
+  width: 100%;
+  max-width: 760px;
+  padding: 26px clamp(18px, 4vw, 40px) 40px;
+  overflow-y: auto;
+}
+
+.settings-archives > h2 { margin: 0; color: var(--text); font-size: 18px; }
+.settings-archives-description { margin: 8px 0 0; color: var(--text-dim); font-size: 11px; line-height: 1.5; }
+.settings-archive-group { margin-top: 28px; }
+.settings-archive-group > header { display: flex; align-items: center; gap: 8px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+.settings-archive-group > header h3 { flex: 1; margin: 0; color: var(--text); font-size: 13px; }
+.settings-archive-group > header span { color: var(--text-dim); font-family: var(--font-mono); font-size: 10px; }
+.settings-archive-list { display: flex; flex-direction: column; }
+.settings-archive-row { display: flex; align-items: center; gap: 16px; min-height: 58px; padding: 9px 2px; border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent); }
+.settings-archive-row > div { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 4px; }
+.settings-archive-row strong { overflow: hidden; color: var(--text); font-size: 12px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.settings-archive-row small { overflow: hidden; color: var(--text-dim); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.settings-archive-actions { display: flex; flex-shrink: 0; align-items: center; gap: 8px; }
+.settings-archive-actions > button { height: 30px; padding: 0 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text-muted); cursor: pointer; font-size: 11px; }
+.settings-archive-actions > button:hover { border-color: color-mix(in srgb, var(--accent) 35%, var(--border)); background: var(--bg-hover); color: var(--accent); }
+.settings-archive-actions > button.settings-archive-delete:hover { border-color: color-mix(in srgb, #c45c4a 45%, var(--border)); background: color-mix(in srgb, #c45c4a 10%, var(--bg)); color: #c45c4a; }
+.settings-archive-actions > button:disabled { opacity: .5; cursor: default; }
+.settings-archive-expand { align-self: center; margin: 12px 0 2px; padding: 6px 12px; border: 0; border-radius: 6px; background: transparent; color: var(--accent); cursor: pointer; font-size: 11px; }
+.settings-archive-expand:hover { background: var(--bg-hover); }
+.settings-archives-empty { margin: 16px 2px 0; color: var(--text-dim); font-size: 11px; }
+
+.settings-confirm-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+  display: grid;
+  place-items: center;
+  padding: 28px;
+  background: color-mix(in srgb, #141413 42%, transparent);
+  backdrop-filter: blur(8px);
+}
+.settings-confirm-dialog {
+  width: min(420px, 100%);
+  padding: 28px 28px 22px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--bg);
+  box-shadow: var(--shadow-float);
+  color: var(--text);
+}
+.settings-confirm-dialog h2 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 28px;
+  font-weight: 400;
+  letter-spacing: -0.03em;
+  line-height: 1.15;
+}
+.settings-confirm-lead {
+  margin: 12px 0 0;
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 650;
+  line-height: 1.4;
+}
+.settings-confirm-copy {
+  margin: 8px 0 0;
+  color: var(--text-body);
+  font-size: 14px;
+  line-height: 1.55;
+}
+.settings-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 24px;
+}
+.settings-confirm-danger,
+.settings-confirm-secondary {
+  display: inline-flex;
+  min-height: 40px;
+  align-items: center;
+  justify-content: center;
+  padding: 0 20px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.settings-confirm-danger {
+  border: 1px solid #c64545;
+  background: #c64545;
+  color: #fff;
+}
+.settings-confirm-danger:hover:not(:disabled) {
+  background: color-mix(in srgb, #c64545 88%, #141413);
+  border-color: color-mix(in srgb, #c64545 88%, #141413);
+}
+.settings-confirm-secondary {
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+}
+.settings-confirm-secondary:hover:not(:disabled) { background: var(--bg-hover); }
+.settings-confirm-danger:disabled,
+.settings-confirm-secondary:disabled { cursor: wait; opacity: 0.65; }
+
+@media (max-width: 720px) {
+  .settings-confirm-backdrop { padding: 16px; align-items: end; }
+  .settings-confirm-dialog { width: 100%; border-radius: 16px 16px 12px 12px; }
+  .settings-confirm-actions { width: 100%; }
+  .settings-confirm-danger,
+  .settings-confirm-secondary { flex: 1; }
+}
+
+
 .settings-general-title {
   margin: 0;
   color: var(--text);
