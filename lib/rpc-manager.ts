@@ -36,7 +36,7 @@ import {
   createProjectCommandBashOperations,
   preferUserBashExtension,
 } from "./project-command-env";
-import { cacheSessionPath, invalidateSessionListCache, resolveSessionPath } from "./session-reader";
+import { cacheSessionPath, invalidateSessionListCache, readMinervaSessionMetadata, resolveSessionPath } from "./session-reader";
 import { getProjectTrustStatus, projectTrustReloadOptions } from "./project-trust";
 import { persistExplicitStartupPreferences } from "./startup-preferences";
 import { notifySessionComplete } from "./web-push";
@@ -1794,6 +1794,7 @@ export function getRpcSessionInfos(): SessionInfo[] {
     const sessionFile = manager.getSessionFile() ?? session.sessionFile;
     const persisted = Boolean(sessionFile && existsSync(sessionFile));
     const subagent = readSubagentRun(entries as unknown as SessionEntry[], header?.id ?? session.sessionId, sessionFile ?? "");
+    const minerva = readMinervaSessionMetadata(entries as unknown as SessionEntry[]);
 
     // An ensure_session call creates an idle, empty runtime while the composer
     // loads commands. Do not leak it into history before a prompt is accepted.
@@ -1829,6 +1830,10 @@ export function getRpcSessionInfos(): SessionInfo[] {
         },
       } : {}),
       transient: !persisted,
+      ...(minerva ? {
+        minervaInternal: true,
+        ...(minerva.assignmentId ? { minervaAssignmentId: minerva.assignmentId } : {}),
+      } : {}),
     });
   }
   return sessions;
@@ -1940,9 +1945,10 @@ export async function startRpcSession(
   }
   const graderInfo = grader ?? persistedGrader ?? null;
   const evaluatorInfo = evaluator ?? persistedEvaluator ?? null;
+  const adapterInfo = adapter ?? persistedAdapter ?? null;
   const isGrader = Boolean(graderInfo);
   const isEvaluator = Boolean(evaluatorInfo);
-  const isAdapter = Boolean(adapter || persistedAdapter);
+  const isAdapter = Boolean(adapterInfo);
   const isMinervaAgent = isGrader || isEvaluator || isAdapter || Boolean(summarizerInfo);
   const subagentResources = sessionFile
     ? readSubagentSessionResources(sessionEntries)
@@ -2041,7 +2047,7 @@ export async function startRpcSession(
                       }
                     : undefined,
               )]),
-              ...(isAdapter ? [createDocumentParseExtension()] : []),
+              ...(adapterInfo ? [createDocumentParseExtension({ assignmentId: adapterInfo.assignmentId })] : []),
             ],
             extensionsOverride: (base) => preferUserBashExtension(preferPiWebSubagentExtension(base)),
           },

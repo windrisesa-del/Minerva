@@ -2,7 +2,7 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
-const STORE_PATH = join(homedir(), ".pi", "minerva", "evaluator-runs.json");
+const STORE_PATH = join(process.env.MINERVA_STATE_DIR || join(homedir(), ".pi", "minerva"), "evaluator-runs.json");
 
 export interface EvaluatorRunRecord {
   assignmentId: string;

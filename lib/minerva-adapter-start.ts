@@ -43,7 +43,7 @@ export function resolveMinervaProjectRoot(): string {
 }
 
 async function discardImportedAssignment(assignmentId: string): Promise<void> {
-  const response = await fetch(`${dataApiUrl()}/api/assignments/${encodeURIComponent(assignmentId)}`, {
+  const response = await fetch(`${dataApiUrl()}/api/assignments/${encodeURIComponent(assignmentId)}?draft_only=true`, {
     method: "DELETE",
     cache: "no-store",
     headers: { Accept: "application/json" },
@@ -115,17 +115,59 @@ export type AdapterSource = {
   student_id?: string;
 };
 
-export async function runAdapterPipeline(options: {
+type AdapterPipelineOptions = {
   assignmentId: string;
   title: string;
   sources: AdapterSource[];
   unmatched?: { filename: string; reason: string }[];
   cwd?: string;
-}) {
-  if (!options.sources.length) throw new Error("Adapter has no uploaded sources to process");
-  if (options.sources.some((source) => !source.storage_key.startsWith("/uploads/"))) {
-    throw new Error("Adapter source path is outside the upload store");
+};
+
+declare global {
+  var __minervaActiveAdapterAssignments: Set<string> | undefined;
+}
+
+function getActiveAdapterAssignments(): Set<string> {
+  if (!globalThis.__minervaActiveAdapterAssignments) {
+    globalThis.__minervaActiveAdapterAssignments = new Set<string>();
   }
+  return globalThis.__minervaActiveAdapterAssignments;
+}
+
+export function claimAdapterPipeline(assignmentId: string): boolean {
+  const active = getActiveAdapterAssignments();
+  if (active.has(assignmentId)) return false;
+  active.add(assignmentId);
+  return true;
+}
+
+export function validateAdapterSources(assignmentId: string, sources: readonly AdapterSource[]): void {
+  if (!sources.length) throw new Error("Adapter has no uploaded sources to process");
+  const assignmentPrefix = `/uploads/assignments/${assignmentId}/`;
+  const seen = new Set<string>();
+  for (const source of sources) {
+    if (source.role !== "assessment_material" && source.role !== "student_submission") {
+      throw new Error("Adapter source role is invalid");
+    }
+    if (typeof source.storage_key !== "string" || !source.storage_key.startsWith(assignmentPrefix)) {
+      throw new Error("Adapter source path does not belong to the current assignment");
+    }
+    if (seen.has(source.storage_key)) throw new Error("Adapter source list contains duplicate files");
+    seen.add(source.storage_key);
+    if (source.role === "student_submission") {
+      const studentId = source.student_id?.trim();
+      if (!studentId || !source.storage_key.startsWith(`${assignmentPrefix}${studentId}/`)) {
+        throw new Error("Adapter student source is not bound to its declared student");
+      }
+    } else if (source.student_id) {
+      throw new Error("Adapter assessment material cannot be bound to a student");
+    }
+  }
+}
+
+async function runClaimedAdapterPipeline(options: AdapterPipelineOptions) {
+  validateAdapterSources(options.assignmentId, options.sources);
+  if (!options.sources.length) throw new Error("Adapter has no uploaded sources to process");
   const cwd = resolveMinervaProjectRoot();
   const runDirectory = resolve(cwd, "backend", ".data", "adapter-runs", options.assignmentId);
   const requestPath = join(runDirectory, "request.json");
@@ -211,6 +253,8 @@ export async function runAdapterPipeline(options: {
     if (!adapterCompleted) {
       await updateWorkbenchSession(options.assignmentId, realSessionId, { status: "failed", error: reason })
         .catch((workbenchError) => console.error("[minerva] failed to update Adapter workbench failure:", workbenchError));
+    } else {
+      throw new Error(`作业预处理已保存，但自动批改启动失败：${reason}。已保存数据会在服务恢复后继续处理`);
     }
     try {
       await discardImportedAssignment(options.assignmentId);
@@ -218,6 +262,18 @@ export async function runAdapterPipeline(options: {
       throw new Error(`自动处理失败：${reason}。相关数据清理失败：${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`);
     }
     throw new Error(`自动处理失败：${reason}。本次导入数据已清理，请重新导入`);
+  }
+}
+
+export async function runAdapterPipeline(options: AdapterPipelineOptions) {
+  validateAdapterSources(options.assignmentId, options.sources);
+  if (!claimAdapterPipeline(options.assignmentId)) {
+    return { assignmentId: options.assignmentId, duplicate: true as const };
+  }
+  try {
+    return await runClaimedAdapterPipeline(options);
+  } finally {
+    getActiveAdapterAssignments().delete(options.assignmentId);
   }
 }
 

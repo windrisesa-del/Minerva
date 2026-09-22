@@ -37,6 +37,15 @@ test("ignores malformed auth provider responses", () => {
   );
 });
 
+test("lists project runtime models beneath connected providers", () => {
+  assert.match(source, /fetch\(`\/api\/models\$\{query\}`\)/);
+  assert.match(source, /type: "runtime-model"/);
+  assert.match(source, /models\.filter\(\(model\) => model\.provider === providerId\)/);
+  assert.match(source, /<RuntimeModelRows/);
+  assert.match(source, /<RuntimeModelDetail/);
+  assert.match(source, /thinkingLevels\[`\$\{model\.provider\}:\$\{model\.id\}`\]/);
+});
+
 test("custom model config exposes provider-level request headers", () => {
   const providerDetail = source.slice(
     source.indexOf("function ProviderDetail"),

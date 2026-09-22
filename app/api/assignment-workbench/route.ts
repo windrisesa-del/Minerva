@@ -58,7 +58,7 @@ export async function GET(request: Request) {
     return NextResponse.json({
       workbench: {
         ...workbench,
-        currentSession: workbench.currentSession ? {
+        currentSession: workbench.currentSession?.privacyVersion === 1 ? {
           ...workbench.currentSession,
           running: running.has(workbench.currentSession.sessionId),
         } : undefined,

@@ -8,7 +8,9 @@ function dataApiUrl() {
   return (process.env.MINERVA_DATA_API_URL || DEFAULT_DATA_API).replace(/\/$/, "");
 }
 
-export function createDocumentParseExtension(): InlineExtension {
+export function createDocumentParseExtension(options?: { assignmentId?: string }): InlineExtension {
+  const assignmentId = options?.assignmentId?.trim() ?? "";
+  const assignmentPrefix = assignmentId ? `/uploads/assignments/${assignmentId}/` : "";
   return {
     name: "pi-web-minerva-document-parse",
     hidden: true,
@@ -27,6 +29,13 @@ export function createDocumentParseExtension(): InlineExtension {
         }),
         async execute(_toolCallId, params) {
           try {
+            if (assignmentPrefix && !params.path.startsWith(assignmentPrefix)) {
+              return {
+                content: [{ type: "text" as const, text: "document_parse 只能读取当前 Adapter 作业的上传文件" }],
+                details: undefined,
+                isError: true,
+              };
+            }
             const response = await fetch(`${dataApiUrl()}/api/document/parse`, {
               method: "POST",
               cache: "no-store",

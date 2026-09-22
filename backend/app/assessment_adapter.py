@@ -26,6 +26,52 @@ ANALYSIS_FIELDS = {
 }
 
 
+def _require_scoped_path(value: Any, prefix: str, label: str) -> str:
+    path = str(value or "")
+    if not path.startswith(prefix):
+        raise ValueError(f"{label} 不属于当前作业")
+    return path
+
+
+def _validate_adapter_trace_paths(assignment_id: UUID, payload: dict[str, Any]) -> None:
+    assignment_prefix = f"/uploads/assignments/{assignment_id}/"
+
+    for path in payload.get("normalized_documents") or []:
+        _require_scoped_path(path, assignment_prefix, "Assessment normalized_documents")
+    for question in payload.get("questions") or []:
+        for reference in question.get("source_references") or []:
+            if isinstance(reference, dict):
+                _require_scoped_path(reference.get("path"), assignment_prefix, "题目证据路径")
+    for raw in (payload.get("assets") or {}).values():
+        if not isinstance(raw, dict):
+            raise ValueError("Assessment asset 必须是对象")
+        path = str(raw.get("path") or "")
+        if not (path.startswith(assignment_prefix) or path.startswith("/uploads/adapter-assets/")):
+            raise ValueError("Assessment asset 文件不属于当前作业")
+        _require_scoped_path(raw.get("source_path") or path, assignment_prefix, "Assessment asset 来源")
+
+    for submission in payload.get("student_submissions") or []:
+        if not isinstance(submission, dict):
+            continue
+        student_id = str(submission.get("student_id") or "")
+        student_prefix = f"{assignment_prefix}{student_id}/"
+        for path in submission.get("normalized_documents") or []:
+            _require_scoped_path(path, student_prefix, "学生 normalized_documents")
+        for raw in (submission.get("assets") or {}).values():
+            if not isinstance(raw, dict):
+                raise ValueError("学生 asset 必须是对象")
+            path = str(raw.get("path") or "")
+            if not (path.startswith(student_prefix) or path.startswith("/uploads/adapter-assets/")):
+                raise ValueError("学生 asset 文件不属于对应学生")
+            _require_scoped_path(raw.get("source_path") or path, student_prefix, "学生 asset 来源")
+        for answer in submission.get("answers") or []:
+            if not isinstance(answer, dict):
+                continue
+            for reference in answer.get("source_references") or []:
+                if isinstance(reference, dict):
+                    _require_scoped_path(reference.get("path"), student_prefix, "学生答案证据路径")
+
+
 def knowledge_ids_from_analysis(analysis: dict[str, Any]) -> list[str]:
     """Use specific tested concepts as knowledge IDs; fall back to the coarser domain."""
     seen: set[str] = set()
@@ -42,11 +88,13 @@ def knowledge_ids_from_analysis(analysis: dict[str, Any]) -> list[str]:
 
 
 def apply_adapter_assessment(session: Session, assignment_id: UUID, payload: dict[str, Any]) -> dict[str, Any]:
-    assignment = session.get(Assignment, assignment_id)
+    assignment = session.scalar(
+        select(Assignment).where(Assignment.id == assignment_id).with_for_update()
+    )
     if assignment is None:
         raise ValueError("作业不存在")
-    if assignment.status not in {"draft", "ungraded"}:
-        raise ValueError("Adapter 只能更新待预处理或未批改作业")
+    if assignment.status != "draft":
+        raise ValueError("Adapter 只能写入尚未完成预处理的作业")
     if payload.get("schema_version") != "minerva-assessment/0.1" or payload.get("status") != "ungraded":
         raise ValueError("Assessment schema_version 或 status 无效")
     metadata = payload.get("metadata")
@@ -97,6 +145,8 @@ def apply_adapter_assessment(session: Session, assignment_id: UUID, payload: dic
     expected_students = {str(submission.student_id) for submission in submissions}
     if set(normalized_by_student) != expected_students:
         raise ValueError("student_submissions 必须与当前作业的已提交学生完全一致")
+
+    _validate_adapter_trace_paths(assignment_id, payload)
 
     payload["assets"] = _scope_assets(assignment_id, "spec", assets)
     for student_key, normalized in normalized_by_student.items():

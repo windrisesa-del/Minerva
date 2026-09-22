@@ -16,7 +16,8 @@ import { ASSIGNMENT_SESSION_HISTORY_BOUNDARY } from "./assignment-session-displa
 
 const COMPACTION_INSTRUCTIONS = `你正在整理一次作业处理完成后的当前会话内容。
 请把此前按时间拼接的 Adapter、Marker、Evaluator 与 Summarizer 原始会话压缩为一份可供 Pi 后续继续对话的上下文。
-保留作业身份、题目结构、批改结论、学生画像更新、证据缓冲区变化、作业报告、异常与尚未解决事项。
+保留作业身份、题目结构、批改结论、已经确认的学生画像更新、作业报告、异常与尚未解决事项。
+Evidence Buffer 是 Evaluator 私有状态，不得保留、概括、引用或推测其中的内容。
 明确区分模型判断、数据库事实和工具执行结果。省略重复的工具调用细节、重复读取结果和无后续价值的过程性表述。
 不要产生新的评分、学生判断或报告结论。`;
 
@@ -49,8 +50,80 @@ export function assignmentSessionTitle(createdAt: string, title: string): string
   return `${dateText} · ${title}`;
 }
 
-function sanitizedJson(value: unknown): string {
-  return JSON.stringify(value, (key, item) => {
+const PRIVATE_BUFFER_KEYS = new Set([
+  "evidence_buffer",
+  "rollback_evidence_buffer",
+  "buffer_items",
+  "buffer_candidate_ids",
+  "buffer_change_refs",
+]);
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function redactEmbeddedEvaluatorContext(text: string): string {
+  const marker = "evaluator_context:";
+  const markerIndex = text.indexOf(marker);
+  if (markerIndex < 0) return text;
+  const start = text.indexOf("{", markerIndex + marker.length);
+  if (start < 0) return text;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let index = start; index < text.length; index += 1) {
+    const char = text[index];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === '"') inString = false;
+      continue;
+    }
+    if (char === '"') inString = true;
+    else if (char === "{") depth += 1;
+    else if (char === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        try {
+          const parsed = JSON.parse(text.slice(start, index + 1));
+          return `${text.slice(0, start)}${JSON.stringify(redactPrivateBuffer(parsed))}${text.slice(index + 1)}`;
+        } catch {
+          return text;
+        }
+      }
+    }
+  }
+  return text;
+}
+
+function redactPrivateBuffer(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value
+      .filter((item) => !(isRecord(item) && typeof item.path === "string" && item.path.startsWith("/evidence_buffer/")))
+      .map(redactPrivateBuffer);
+  }
+  if (isRecord(value)) {
+    return Object.fromEntries(Object.entries(value)
+      .filter(([key]) => !PRIVATE_BUFFER_KEYS.has(key))
+      .map(([key, item]) => [key, redactPrivateBuffer(item)]));
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+      try {
+        return JSON.stringify(redactPrivateBuffer(JSON.parse(trimmed)));
+      } catch {
+        // Continue with embedded evaluator-context redaction.
+      }
+    }
+    return redactEmbeddedEvaluatorContext(value);
+  }
+  return value;
+}
+
+function sanitizedJson(value: unknown, evaluatorPrivate = false): string {
+  const safeValue = evaluatorPrivate ? redactPrivateBuffer(value) : value;
+  return JSON.stringify(safeValue, (key, item) => {
     if (key === "thinking" && typeof item === "string") return "[内部思考过程已省略]";
     if (key === "details") return "[工具详情副本已省略，保留工具结果正文]";
     if (["data", "image", "image_url", "audio_url"].includes(key) && typeof item === "string" && item.length > 2048) {
@@ -59,6 +132,21 @@ function sanitizedJson(value: unknown): string {
     if (typeof item === "string") return shortenText(item);
     return item;
   });
+}
+
+function evaluatorMessageForWorkbench(value: unknown): unknown {
+  const redacted = redactPrivateBuffer(value);
+  if (!isRecord(redacted) || redacted.role !== "assistant") return redacted;
+  if (!Array.isArray(redacted.content)) {
+    return { ...redacted, content: "[Evaluator 过程说明已省略；仅保留结构化画像写入]" };
+  }
+  const content = redacted.content.filter((block) => (
+    !isRecord(block) || (block.type !== "text" && block.type !== "thinking")
+  ));
+  return {
+    ...redacted,
+    content: content.length ? content : [{ type: "text", text: "[Evaluator 过程说明已省略；仅保留结构化画像写入]" }],
+  };
 }
 
 export function fitTranscriptBlocks(blocks: string[][], maxChars = MAX_COMPACTION_INPUT_CHARS): string[] {
@@ -86,11 +174,12 @@ export function serializeWorkbenchSession(
   for (const entry of entries) {
     if (entry.type === "message" && entry.message) {
       const message = entry.message as { role?: unknown };
-      lines.push(`\n[${typeof message.role === "string" ? message.role : "message"}]\n${sanitizedJson(entry.message)}`);
+      const safeMessage = session.role === "evaluator" ? evaluatorMessageForWorkbench(entry.message) : entry.message;
+      lines.push(`\n[${typeof message.role === "string" ? message.role : "message"}]\n${sanitizedJson(safeMessage, session.role === "evaluator")}`);
     } else if (entry.type === "compaction" && typeof entry.summary === "string") {
-      lines.push(`\n[既有压缩摘要]\n${entry.summary}`);
+      lines.push(`\n[既有压缩摘要]\n${session.role === "evaluator" ? "[Evaluator 既有摘要已省略]" : entry.summary}`);
     } else if (entry.type === "branch_summary" && typeof entry.summary === "string") {
-      lines.push(`\n[分支摘要]\n${entry.summary}`);
+      lines.push(`\n[分支摘要]\n${session.role === "evaluator" ? "[Evaluator 分支摘要已省略]" : entry.summary}`);
     }
   }
   return lines;
@@ -126,7 +215,7 @@ export async function finalizeAssignmentSession(options: {
 }): Promise<string | null> {
   const workbench = await readAssignmentWorkbench(options.assignmentId);
   if (!workbench) return null;
-  if (workbench.currentSession?.status === "ready") {
+  if (workbench.currentSession?.status === "ready" && workbench.currentSession.privacyVersion === 1) {
     const existingPath = await resolveSessionPath(workbench.currentSession.sessionId);
     if (existingPath && existsSync(existingPath)) {
       const existingManager = SessionManager.open(existingPath);
@@ -167,6 +256,7 @@ export async function finalizeAssignmentSession(options: {
     status: "building",
     compacted: false,
     createdAt,
+    privacyVersion: 1,
   });
   invalidateSessionListCache();
 
@@ -223,6 +313,7 @@ export async function finalizeAssignmentSession(options: {
       status: "ready",
       compacted,
       createdAt,
+      privacyVersion: 1,
     });
     invalidateSessionListCache();
     return realSessionId;
@@ -232,6 +323,7 @@ export async function finalizeAssignmentSession(options: {
       status: "failed",
       compacted: false,
       createdAt,
+      privacyVersion: 1,
       error: error instanceof Error ? error.message : String(error),
     }).catch(() => undefined);
     throw error;

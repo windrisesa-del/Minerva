@@ -97,6 +97,18 @@ interface ModelsJson {
   providers?: Record<string, ProviderEntry>;
 }
 
+interface RuntimeModelEntry {
+  id: string;
+  name: string;
+  provider: string;
+}
+
+interface RuntimeModelsData {
+  modelList: RuntimeModelEntry[];
+  defaultModel: { provider: string; modelId: string } | null;
+  thinkingLevels: Record<string, string[]>;
+}
+
 type ModelTestState =
   | { phase: "idle" }
   | { phase: "testing" }
@@ -118,6 +130,7 @@ type ModelCatalogState =
 type Selection =
   | { type: "provider"; name: string }
   | { type: "model"; providerName: string; index: number }
+  | { type: "runtime-model"; providerId: string; modelId: string }
   | { type: "oauth"; providerId: string }
   | { type: "apikey"; providerId: string };
 
@@ -137,6 +150,11 @@ function readRememberedSelection(): Selection | null {
       && Number.isInteger(selection.index)
       && selection.index >= 0) {
       return { type: "model", providerName: selection.providerName, index: selection.index };
+    }
+    if (selection.type === "runtime-model"
+      && typeof selection.providerId === "string"
+      && typeof selection.modelId === "string") {
+      return { type: "runtime-model", providerId: selection.providerId, modelId: selection.modelId };
     }
     if ((selection.type === "oauth" || selection.type === "apikey")
       && typeof selection.providerId === "string") {
@@ -284,6 +302,85 @@ function Check({ label, checked, onChange }: { label: string; checked: boolean; 
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
   return <ConfigSectionTitle>{children}</ConfigSectionTitle>;
+}
+
+function RuntimeModelRows({
+  providerId,
+  models,
+  selection,
+  defaultModel,
+  onSelect,
+}: {
+  providerId: string;
+  models: RuntimeModelEntry[];
+  selection: Selection | null;
+  defaultModel: RuntimeModelsData["defaultModel"];
+  onSelect: (model: RuntimeModelEntry) => void;
+}) {
+  const { t } = useI18n();
+  return models.filter((model) => model.provider === providerId).map((model) => {
+    const active = selection?.type === "runtime-model"
+      && selection.providerId === providerId
+      && selection.modelId === model.id;
+    const isDefault = defaultModel?.provider === providerId && defaultModel.modelId === model.id;
+    return (
+      <ConfigSidebarItem
+        key={`${providerId}:${model.id}`}
+        active={active}
+        className="models-sidebar-indented-item"
+        onClick={() => onSelect(model)}
+      >
+        <ConfigSidebarText className="is-grow" style={{ color: "var(--text-muted)" }}>
+          {model.name || model.id}
+        </ConfigSidebarText>
+        {isDefault && (
+          <span style={{ fontSize: 9, color: "var(--accent)", flexShrink: 0 }}>{t("i18n.default")}</span>
+        )}
+      </ConfigSidebarItem>
+    );
+  });
+}
+
+function RuntimeModelDetail({
+  model,
+  isDefault,
+  thinkingLevels,
+}: {
+  model: RuntimeModelEntry;
+  isDefault: boolean;
+  thinkingLevels: string[];
+}) {
+  const { t } = useI18n();
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+        <SectionTitle>{model.name || model.id}</SectionTitle>
+        {isDefault && (
+          <span style={{ padding: "2px 7px", borderRadius: 999, background: "color-mix(in srgb, var(--accent) 12%, transparent)", color: "var(--accent)", fontSize: 10, fontWeight: 600 }}>
+            {t("i18n.default")}
+          </span>
+        )}
+      </div>
+      <Field label={t("i18n.provider")}>
+        <div style={{ color: "var(--text)", fontSize: 12, fontFamily: "var(--font-mono)" }}>{model.provider}</div>
+      </Field>
+      <Field label={t("models.modelId")}>
+        <div style={{ color: "var(--text)", fontSize: 12, fontFamily: "var(--font-mono)" }}>{model.id}</div>
+      </Field>
+      <Field label={t("models.availableThinkingLevels")}>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+          {thinkingLevels.length > 0 ? thinkingLevels.map((level) => (
+            <span key={level} style={{ padding: "3px 7px", border: "1px solid var(--border)", borderRadius: 999, color: "var(--text-muted)", fontSize: 10, fontFamily: "var(--font-mono)" }}>
+              {level}
+            </span>
+          )) : <span style={{ color: "var(--text-dim)", fontSize: 12 }}>{t("models.notProvided")}</span>}
+        </div>
+      </Field>
+      <p style={{ margin: 0, color: "var(--text-muted)", fontSize: 12, lineHeight: 1.6 }}>
+        {t("models.runtimeManaged")}
+      </p>
+    </div>
+  );
 }
 
 // ── Provider detail ───────────────────────────────────────────────────────────
@@ -1825,7 +1922,7 @@ function AddProviderPicker({
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-export function ModelsConfig({ onClose, embedded = false }: { onClose: () => void; embedded?: boolean }) {
+export function ModelsConfig({ onClose, embedded = false, cwd }: { onClose: () => void; embedded?: boolean; cwd?: string | null }) {
   const { t } = useI18n();
   const [config, setConfig] = useState<ModelsJson>({ providers: {} });
   const [loading, setLoading] = useState(true);
@@ -1835,6 +1932,7 @@ export function ModelsConfig({ onClose, embedded = false }: { onClose: () => voi
   const [selection, setSelection] = useState<Selection | null>(readRememberedSelection);
   const [oauthProviders, setOauthProviders] = useState<OAuthProvider[]>([]);
   const [apiKeyProviders, setApiKeyProviders] = useState<ApiKeyProvider[]>([]);
+  const [runtimeModels, setRuntimeModels] = useState<RuntimeModelsData>({ modelList: [], defaultModel: null, thinkingLevels: {} });
   const [pickerOpen, setPickerOpen] = useState(false);
 
   const refreshAuthProviders = useCallback(() => {
@@ -1846,6 +1944,25 @@ export function ModelsConfig({ onClose, embedded = false }: { onClose: () => voi
       })
       .catch(() => {});
   }, []);
+
+  const refreshRuntimeModels = useCallback(() => {
+    const query = cwd ? `?cwd=${encodeURIComponent(cwd)}` : "";
+    fetch(`/api/models${query}`)
+      .then((r) => r.json())
+      .then((data: Partial<RuntimeModelsData>) => {
+        setRuntimeModels({
+          modelList: Array.isArray(data.modelList) ? data.modelList : [],
+          defaultModel: data.defaultModel ?? null,
+          thinkingLevels: data.thinkingLevels && typeof data.thinkingLevels === "object" ? data.thinkingLevels : {},
+        });
+      })
+      .catch(() => setRuntimeModels({ modelList: [], defaultModel: null, thinkingLevels: {} }));
+  }, [cwd]);
+
+  const refreshManagedProviders = useCallback(() => {
+    refreshAuthProviders();
+    refreshRuntimeModels();
+  }, [refreshAuthProviders, refreshRuntimeModels]);
 
   useEffect(() => {
     fetch("/api/models-config")
@@ -1862,8 +1979,8 @@ export function ModelsConfig({ onClose, embedded = false }: { onClose: () => voi
       })
       .catch(() => setConfig({ providers: {} }))
       .finally(() => setLoading(false));
-    refreshAuthProviders();
-  }, [refreshAuthProviders]);
+    refreshManagedProviders();
+  }, [refreshManagedProviders]);
 
   useEffect(() => {
     if (selection) setLastSettingsSelection("models", JSON.stringify(selection));
@@ -1980,18 +2097,45 @@ export function ModelsConfig({ onClose, embedded = false }: { onClose: () => voi
   const activeOAuth = oauthProviders.filter((p) => p.loggedIn);
   const activeApiKey = apiKeyProviders.filter((p) => p.configured);
 
+  useEffect(() => {
+    if (loading || selection) return;
+    if (activeOAuth[0]) {
+      setSelection({ type: "oauth", providerId: activeOAuth[0].id });
+      return;
+    }
+    if (activeApiKey[0]) {
+      setSelection({ type: "apikey", providerId: activeApiKey[0].id });
+    }
+  }, [activeApiKey, activeOAuth, loading, selection]);
+
   // Resolve current detail
   const detailContent = (() => {
     if (!selection) return null;
     if (selection.type === "oauth") {
       const p = oauthProviders.find((p) => p.id === selection.providerId);
       if (!p) return null;
-      return <OAuthDetail key={p.id} provider={p} onRefresh={refreshAuthProviders} />;
+      return <OAuthDetail key={p.id} provider={p} onRefresh={refreshManagedProviders} />;
     }
     if (selection.type === "apikey") {
       const p = apiKeyProviders.find((p) => p.id === selection.providerId);
       if (!p) return null;
-      return <ApiKeyDetail key={p.id} provider={p} onRefresh={refreshAuthProviders} />;
+      return <ApiKeyDetail key={p.id} provider={p} onRefresh={refreshManagedProviders} />;
+    }
+    if (selection.type === "runtime-model") {
+      const model = runtimeModels.modelList.find((item) => (
+        item.provider === selection.providerId && item.id === selection.modelId
+      ));
+      if (!model) return null;
+      const isDefault = runtimeModels.defaultModel?.provider === model.provider
+        && runtimeModels.defaultModel.modelId === model.id;
+      return (
+        <RuntimeModelDetail
+          key={`${model.provider}:${model.id}`}
+          model={model}
+          isDefault={isDefault}
+          thinkingLevels={runtimeModels.thinkingLevels[`${model.provider}:${model.id}`] ?? []}
+        />
+      );
     }
     if (selection.type === "provider") {
       const provider = config.providers?.[selection.name];
@@ -2037,14 +2181,22 @@ export function ModelsConfig({ onClose, embedded = false }: { onClose: () => voi
               {activeOAuth.map((p) => {
                 const isSelected = selection?.type === "oauth" && selection.providerId === p.id;
                 return (
-                  <ConfigSidebarItem
-                    key={p.id}
-                    active={isSelected}
-                    onClick={() => setSelection({ type: "oauth", providerId: p.id })}
-                  >
-                    <ProviderIcon id={p.id} size={16} />
-                    <ConfigSidebarText className="is-grow">{p.name}</ConfigSidebarText>
-                  </ConfigSidebarItem>
+                  <div key={p.id} style={{ marginBottom: 2 }}>
+                    <ConfigSidebarItem
+                      active={isSelected}
+                      onClick={() => setSelection({ type: "oauth", providerId: p.id })}
+                    >
+                      <ProviderIcon id={p.id} size={16} />
+                      <ConfigSidebarText className="is-grow">{p.name}</ConfigSidebarText>
+                    </ConfigSidebarItem>
+                    <RuntimeModelRows
+                      providerId={p.id}
+                      models={runtimeModels.modelList}
+                      selection={selection}
+                      defaultModel={runtimeModels.defaultModel}
+                      onSelect={(model) => setSelection({ type: "runtime-model", providerId: p.id, modelId: model.id })}
+                    />
+                  </div>
                 );
               })}
 
@@ -2052,14 +2204,22 @@ export function ModelsConfig({ onClose, embedded = false }: { onClose: () => voi
               {activeApiKey.map((p) => {
                 const isSelected = selection?.type === "apikey" && selection.providerId === p.id;
                 return (
-                  <ConfigSidebarItem
-                    key={p.id}
-                    active={isSelected}
-                    onClick={() => setSelection({ type: "apikey", providerId: p.id })}
-                  >
-                    <ProviderIcon id={p.id} size={16} />
-                    <ConfigSidebarText className="is-grow">{p.displayName}</ConfigSidebarText>
-                  </ConfigSidebarItem>
+                  <div key={p.id} style={{ marginBottom: 2 }}>
+                    <ConfigSidebarItem
+                      active={isSelected}
+                      onClick={() => setSelection({ type: "apikey", providerId: p.id })}
+                    >
+                      <ProviderIcon id={p.id} size={16} />
+                      <ConfigSidebarText className="is-grow">{p.displayName}</ConfigSidebarText>
+                    </ConfigSidebarItem>
+                    <RuntimeModelRows
+                      providerId={p.id}
+                      models={runtimeModels.modelList}
+                      selection={selection}
+                      defaultModel={runtimeModels.defaultModel}
+                      onSelect={(model) => setSelection({ type: "runtime-model", providerId: p.id, modelId: model.id })}
+                    />
+                  </div>
                 );
               })}
 

@@ -81,7 +81,10 @@ function clusterSessions(sessions: SessionEntry[]): SessionCluster[] {
       continue;
     }
     clusters.push({
-      key: session.groupId || session.sessionId,
+      // A recovered or restarted pipeline can reuse group ids such as
+      // "evaluator:0". Include the first session id so separate waves never
+      // collide when React renders the cluster list.
+      key: session.groupId ? `${session.groupId}:${session.sessionId}` : session.sessionId,
       role: session.role,
       groupId: session.groupId,
       parallel: false,
@@ -103,11 +106,12 @@ function agentHeading(session: SessionEntry, index: number): string {
   return `Agent ${number} · ${session.label}${retry}`;
 }
 
-export function AssignmentWorkbench({ assignmentId, showProcess, onProcessAvailabilityChange, onInitialReady }: {
+export function AssignmentWorkbench({ assignmentId, showProcess, onProcessAvailabilityChange, onTitleChange, onInitialReady }: {
   assignmentId: string;
   onBack?: () => void;
   showProcess: boolean;
   onProcessAvailabilityChange?: (available: boolean) => void;
+  onTitleChange?: (title: string | null) => void;
   onInitialReady?: () => void;
 }) {
   const [workbench, setWorkbench] = useState<Workbench | null>(null);
@@ -141,6 +145,12 @@ export function AssignmentWorkbench({ assignmentId, showProcess, onProcessAvaila
   useEffect(() => {
     onInitialReady?.();
   }, [onInitialReady]);
+
+  useEffect(() => {
+    onTitleChange?.(workbench?.displayTitle ?? null);
+  }, [onTitleChange, workbench?.displayTitle]);
+
+  useEffect(() => () => onTitleChange?.(null), [onTitleChange]);
 
   useEffect(() => {
     onProcessAvailabilityChange?.(Boolean(currentSessionInfo));

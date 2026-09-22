@@ -2,7 +2,7 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
-const STORE_PATH = join(homedir(), ".pi", "minerva", "grading-runs.json");
+const STORE_PATH = join(process.env.MINERVA_STATE_DIR || join(homedir(), ".pi", "minerva"), "grading-runs.json");
 
 export interface GradingRunRecord {
   assignmentId: string;
@@ -14,6 +14,7 @@ export interface GradingRunRecord {
   totalStudents?: number;
   error?: string;
   failedAt?: string;
+  updatedAt?: string;
   hostPid?: number;
 }
 
@@ -47,6 +48,7 @@ function validateStore(value: unknown): GradingRunStore {
       totalStudents: typeof run.totalStudents === "number" ? run.totalStudents : 0,
       ...(typeof run.error === "string" ? { error: run.error } : {}),
       ...(typeof run.failedAt === "string" ? { failedAt: run.failedAt } : {}),
+      ...(typeof run.updatedAt === "string" ? { updatedAt: run.updatedAt } : {}),
       ...(typeof run.hostPid === "number" ? { hostPid: run.hostPid } : {}),
     };
   }
@@ -78,12 +80,17 @@ export async function upsertGradingRun(run: GradingRunRecord): Promise<GradingRu
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       }
-      store.runs[run.assignmentId] = { ...run, hostPid: run.hostPid ?? process.pid };
+      const stored = {
+        ...run,
+        updatedAt: new Date().toISOString(),
+        hostPid: run.hostPid ?? process.pid,
+      };
+      store.runs[run.assignmentId] = stored;
       await mkdir(dirname(STORE_PATH), { recursive: true });
       const temporaryPath = `${STORE_PATH}.${process.pid}.${Date.now()}.tmp`;
       await writeFile(temporaryPath, `${JSON.stringify(store, null, 2)}\n`, "utf8");
       await rename(temporaryPath, STORE_PATH);
-      resolveResult(run);
+      resolveResult(stored);
     } catch (error) {
       rejectResult(error);
     }

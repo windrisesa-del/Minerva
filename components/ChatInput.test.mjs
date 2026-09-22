@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { createJiti } from "jiti";
 
@@ -161,6 +162,12 @@ test("renders the shared field model selector as a disabled gray control", () =>
   assert.match(html, /disabled=""/);
   assert.match(html, /background:var\(--bg-panel\)/);
   assert.match(html, />Parent default</);
+});
+
+test("renders the fixed model menu through the document body portal", async () => {
+  const source = await readFile(new URL("./ModelSelector.tsx", import.meta.url), "utf8");
+  assert.match(source, /import \{ createPortal \} from "react-dom"/);
+  assert.match(source, /return createPortal\([\s\S]*?position: "fixed"[\s\S]*?document\.body/);
 });
 
 test("caps an upward menu to the visible space above its anchor", () => {

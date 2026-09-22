@@ -41,7 +41,7 @@ function reportMarkdown(report: Report, names: Map<string, string>): string {
     sections.push(
       "### 值得关注的学生",
       report.narrative.student_highlights.map((item) => (
-        `- **${names.get(item.student_id ?? "") || "学生"}：**${indentMarkdown(item.text)}`
+        `- **${names.get(item.student_id ?? "") || "学生"}**：${indentMarkdown(item.text)}`
       )).join("\n"),
     );
   }

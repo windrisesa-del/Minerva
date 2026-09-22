@@ -34,24 +34,16 @@ export async function GET(request: NextRequest) {
   if (!UUID_PATTERN.test(studentId)) {
     return NextResponse.json({ error: "学生编号格式无效" }, { status: 400 });
   }
-  const [description, buffer] = await Promise.all([
-    fetch(`${dataApiUrl()}/api/minerva/read?resource=student_description&student_id=${encodeURIComponent(studentId)}`, {
-      cache: "no-store",
-      headers: { Accept: "application/json" },
-    }),
-    fetch(`${dataApiUrl()}/api/minerva/read?resource=evidence_buffer&student_id=${encodeURIComponent(studentId)}`, {
-      cache: "no-store",
-      headers: { Accept: "application/json" },
-    }),
-  ]);
+  const description = await fetch(`${dataApiUrl()}/api/minerva/read?resource=student_description&student_id=${encodeURIComponent(studentId)}`, {
+    cache: "no-store",
+    headers: { Accept: "application/json" },
+  });
   const descriptionBody = await description.json().catch(() => ({}));
-  const bufferBody = await buffer.json().catch(() => ({}));
   if (!description.ok) {
     return NextResponse.json(descriptionBody, { status: description.status });
   }
   return NextResponse.json({
     description: descriptionBody.records?.[0] ?? null,
-    evidence_buffer: bufferBody.records?.[0] ?? null,
   });
 }
 
@@ -59,7 +51,6 @@ export async function PATCH(request: NextRequest) {
   let payload: {
     studentId?: string;
     fields?: Record<string, unknown>;
-    items?: unknown[];
   };
   try {
     payload = await request.json();
@@ -79,17 +70,6 @@ export async function PATCH(request: NextRequest) {
         student_id: studentId,
         authored_by: "teacher",
         fields: payload.fields,
-      }),
-    });
-  }
-  if (Array.isArray(payload.items)) {
-    return proxyJson(`${dataApiUrl()}/api/minerva/write`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "application/json" },
-      body: JSON.stringify({
-        kind: "evidence_buffer",
-        student_id: studentId,
-        items: payload.items,
       }),
     });
   }

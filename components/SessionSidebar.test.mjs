@@ -48,8 +48,14 @@ test("subagent completion stays silent and never becomes unread", () => {
   assert.match(source, /if \(completedWithNotifications\.length > 0\) \{\s*onBackgroundTaskDone\?\.\(\)/);
   assert.match(
     source,
-    /filter\(\(session\) => session\.relation\?\.kind !== "subagent"\)[\s\S]*?unreadEligibleIds\.has\(id\)/,
+    /filter\(\(session\) => session\.relation\?\.kind !== "subagent" && !session\.minervaInternal\)[\s\S]*?unreadEligibleIds\.has\(id\)/,
   );
+});
+
+test("keeps Minerva processing sessions inside their assignment workbench", () => {
+  assert.match(source, /allSessions\.filter\(\(session\) => !session\.minervaInternal\)/);
+  assert.match(source, /if \(target\.minervaInternal\)/);
+  assert.match(source, /onOpenAssignmentWorkbench\?\.\(target\.minervaAssignmentId\)/);
 });
 
 test("includes project activity counts in accessible labels", () => {

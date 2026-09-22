@@ -407,8 +407,18 @@ def patch_assignment(
 
 
 @app.delete("/api/assignments/{assignment_id}")
-def discard_assignment(assignment_id: UUID, session: Session = Depends(get_session)):
+def discard_assignment(
+    assignment_id: UUID,
+    draft_only: bool = Query(default=False),
+    session: Session = Depends(get_session),
+):
     try:
+        if draft_only:
+            assignment = session.get(Assignment, assignment_id)
+            if assignment is None:
+                raise ValueError("作业不存在")
+            if assignment.status != "draft":
+                raise ValueError("只能清理尚未完成 Adapter 预处理的失败导入")
         return discard_imported_assignment(session, assignment_id)
     except ValueError as error:
         session.rollback()

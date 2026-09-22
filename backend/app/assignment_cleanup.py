@@ -76,7 +76,6 @@ def discard_imported_assignment(session: Session, assignment_id: UUID) -> dict[s
     assignment = session.get(Assignment, assignment_id)
     if assignment is None:
         raise ValueError("作业不存在")
-
     reverted_observation_writes = _rollback_evaluator_observations(session, assignment_id)
 
     question_ids = list(session.scalars(

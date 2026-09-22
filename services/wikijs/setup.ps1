@@ -4,7 +4,7 @@ $serviceRoot = $PSScriptRoot
 $projectRoot = Split-Path -Parent (Split-Path -Parent $serviceRoot)
 $runtimeRoot = Join-Path $serviceRoot "runtime"
 $archivePath = Join-Path $serviceRoot "wiki-js-windows.tar.gz"
-$downloadUrl = "https://github.com/Requarks/wiki/releases/latest/download/wiki-js-windows.tar.gz"
+$downloadUrl = "https://github.com/Requarks/wiki/releases/download/2.5.314/wiki-js-windows.tar.gz"
 $postgresRoot = Join-Path $projectRoot "backend\.runtime\pgsql"
 $psql = Join-Path $postgresRoot "bin\psql.exe"
 $createUser = Join-Path $postgresRoot "bin\createuser.exe"
@@ -21,9 +21,11 @@ if (-not $postgresReady) {
 
 if (-not (Test-Path -LiteralPath (Join-Path $runtimeRoot "server\index.js"))) {
   New-Item -ItemType Directory -Force -Path $runtimeRoot | Out-Null
-  Write-Output "Downloading the official Wiki.js Windows runtime..."
-  & curl.exe -L --fail --show-error --progress-bar -o $archivePath $downloadUrl
-  if ($LASTEXITCODE -ne 0) { throw "Wiki.js download failed" }
+  if (-not (Test-Path -LiteralPath $archivePath)) {
+    Write-Output "Downloading the official Wiki.js Windows runtime..."
+    & curl.exe -L --fail --show-error --progress-bar -o $archivePath $downloadUrl
+    if ($LASTEXITCODE -ne 0) { throw "Wiki.js download failed" }
+  }
   tar -xzf $archivePath -C $runtimeRoot
   if ($LASTEXITCODE -ne 0) { throw "Wiki.js extraction failed" }
   Remove-Item -LiteralPath $archivePath

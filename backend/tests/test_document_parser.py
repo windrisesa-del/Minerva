@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import shutil
 import uuid
+from copy import deepcopy
 
 import fitz
 from docx import Document
@@ -137,6 +138,13 @@ def test_normalized_assessment_persists_as_ungraded_and_rebuilds_questions() -> 
                 "normalized_documents": [source["storage_key"]],
                 "uncertainties": [],
             }
+            cross_assignment = deepcopy(assessment)
+            cross_assignment["normalized_documents"] = [
+                "/uploads/assignments/00000000-0000-4000-8000-000000000000/spec/other.txt"
+            ]
+            rejected = client.post(f"/api/assignments/{assignment_id}/assessment", json=cross_assignment)
+            assert rejected.status_code == 400
+            assert "不属于当前作业" in rejected.json()["detail"]
             saved = client.post(f"/api/assignments/{assignment_id}/assessment", json=assessment)
             assert saved.status_code == 200, saved.text
             assert saved.json()["status"] == "ungraded"
@@ -163,6 +171,12 @@ def test_normalized_assessment_persists_as_ungraded_and_rebuilds_questions() -> 
             ).json()["records"]
             assert answers[0]["answer_payload"]["text"] == "4"
             assert answers[0]["answer_payload"]["attachments"] == []
+            replayed = client.post(f"/api/assignments/{assignment_id}/assessment", json=assessment)
+            assert replayed.status_code == 400
+            assert "尚未完成预处理" in replayed.json()["detail"]
+            guarded_cleanup = client.delete(f"/api/assignments/{assignment_id}?draft_only=true")
+            assert guarded_cleanup.status_code == 409
+            assert "尚未完成 Adapter 预处理" in guarded_cleanup.json()["detail"]
         finally:
             with SessionLocal.begin() as session:
                 session.execute(text("DELETE FROM assignments WHERE id = CAST(:id AS uuid)"), {"id": assignment_id})

@@ -29,6 +29,10 @@ test("Minerva design tokens and semantic surfaces stay wired together", async ()
   assert.match(settings, /Minerva warm-editorial product surfaces/);
   assert.match(shell, /className="minerva-app"/);
   assert.match(shell, /className="minerva-topbar-row"/);
+  assert.match(shell, /className="minerva-topbar-title"/);
+  assert.match(shell, /sessionDisplayTitle/);
+  assert.match(globals, /\.minerva-topbar-title\s*\{[\s\S]*font-family:\s*var\(--font-display\)[\s\S]*font-weight:\s*650/);
+  assert.match(globals, /h1\.minerva-topbar-title\s*\{[\s\S]*font-weight:\s*650/);
   assert.match(globals, /\.minerva-topbar-row > button,[\s\S]*\.minerva-chat-toolbar-actions > button[\s\S]*border-right:\s*0 !important/);
   assert.match(globals, /\.minerva-topbar\s*\{[\s\S]*border-bottom:\s*0 !important/);
   assert.match(chat, /className="minerva-welcome-card\b/);

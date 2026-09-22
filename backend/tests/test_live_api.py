@@ -105,6 +105,7 @@ def test_import_rejects_empty_upload() -> None:
 def test_import_zip_matches_student_number_without_grading() -> None:
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("A组_作业包/题目.pdf", b"question-sheet")
         archive.writestr("提交/1.jpg", b"ungraded-work")
     with TestClient(app) as client:
         classes = client.get("/api/classes").json()

@@ -378,7 +378,106 @@ function normalizeAssets(value: unknown): Record<string, unknown> {
   return cleaned;
 }
 
-function normalizeStudentSubmission(raw: unknown, questionIds: string[]): Record<string, unknown> {
+type QuestionGroup = { questionId: string; memberIds: string[] };
+
+function uniqueRecords(items: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
+  const seen = new Set<string>();
+  return items.filter((item) => {
+    const key = JSON.stringify(item);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function collapseQuestionHierarchy(questions: Array<Record<string, unknown>>): {
+  questions: Array<Record<string, unknown>>;
+  groups: QuestionGroup[];
+} {
+  const byId = new Map(questions.map((question) => [asString(question.question_id), question]));
+  const childrenByParent = new Map<string, Array<Record<string, unknown>>>();
+  for (const question of questions) {
+    const parentId = asString(question.parent_question_id);
+    if (!parentId || !byId.has(parentId)) continue;
+    const children = childrenByParent.get(parentId) ?? [];
+    children.push(question);
+    childrenByParent.set(parentId, children);
+  }
+  const childIds = new Set([...childrenByParent.values()].flatMap((children) => children.map((child) => asString(child.question_id))));
+  const collapsed: Array<Record<string, unknown>> = [];
+  const groups: QuestionGroup[] = [];
+  for (const question of questions) {
+    const questionId = asString(question.question_id);
+    if (childIds.has(questionId)) continue;
+    const children = childrenByParent.get(questionId) ?? [];
+    if (children.length === 0) {
+      collapsed.push({ ...question, position: collapsed.length + 1 });
+      groups.push({ questionId, memberIds: [questionId] });
+      continue;
+    }
+
+    const parentReference = asRecord(question.reference_solution) ?? {};
+    const childReferences = children.map((child) => asRecord(child.reference_solution) ?? {});
+    const childScore = childReferences.reduce((sum, reference) => sum + (asNumber(reference.max_score) ?? 0), 0);
+    const childAnswers = children.flatMap((child, index) => {
+      const answer = asString(childReferences[index].answer);
+      return answer ? [`${asString(child.question_id)}：${answer}`] : [];
+    });
+    const scoringCriteria = children.flatMap((child, index) => {
+      const criteria = Array.isArray(childReferences[index].scoring_criteria) ? childReferences[index].scoring_criteria : [];
+      return criteria.flatMap((item) => {
+        const row = asRecord(item);
+        if (!row) return [];
+        return [{
+          score: asNumber(row.score) ?? 0,
+          requirement: `${asString(child.question_id)}：${asString(row.requirement) || "按该小题参考答案给分"}`,
+        }];
+      });
+    });
+    const partialCredit = children.flatMap((child, index) => {
+      const partial = Array.isArray(childReferences[index].partial_credit) ? childReferences[index].partial_credit : [];
+      return partial.flatMap((item) => {
+        const row = asRecord(item);
+        const condition = asString(row?.condition);
+        if (!row || !condition) return [];
+        return [{ score: asNumber(row.score) ?? 0, condition: `${asString(child.question_id)}：${condition}` }];
+      });
+    });
+    const reasoning = children.flatMap((child, index) => (
+      asStringList(childReferences[index].reasoning).map((text) => `${asString(child.question_id)}：${text}`)
+    ));
+    const content = uniqueRecords([
+      ...(Array.isArray(question.content) ? question.content.filter((item): item is Record<string, unknown> => Boolean(asRecord(item))) : []),
+      ...children.flatMap((child) => Array.isArray(child.content)
+        ? child.content.filter((item): item is Record<string, unknown> => Boolean(asRecord(item)))
+        : []),
+    ]);
+    const sourceReferences = uniqueRecords([
+      ...(Array.isArray(question.source_references) ? question.source_references.filter((item): item is Record<string, unknown> => Boolean(asRecord(item))) : []),
+      ...children.flatMap((child) => Array.isArray(child.source_references)
+        ? child.source_references.filter((item): item is Record<string, unknown> => Boolean(asRecord(item)))
+        : []),
+    ]);
+    collapsed.push({
+      ...question,
+      position: collapsed.length + 1,
+      content,
+      reference_solution: {
+        ...parentReference,
+        answer: childAnswers.join("\n") || asString(parentReference.answer),
+        reasoning: reasoning.length ? reasoning : asStringList(parentReference.reasoning),
+        max_score: childScore || asNumber(parentReference.max_score) || 1,
+        scoring_criteria: scoringCriteria.length ? scoringCriteria : parentReference.scoring_criteria,
+        partial_credit: partialCredit.length ? partialCredit : parentReference.partial_credit,
+      },
+      source_references: sourceReferences,
+    });
+    groups.push({ questionId, memberIds: [questionId, ...children.map((child) => asString(child.question_id))] });
+  }
+  return { questions: collapsed, groups };
+}
+
+function normalizeStudentSubmission(raw: unknown, groups: QuestionGroup[]): Record<string, unknown> {
   const submission = asRecord(raw) ?? {};
   const answersById = new Map<string, Record<string, unknown>>();
   for (const item of Array.isArray(submission.answers) ? submission.answers : []) {
@@ -396,18 +495,50 @@ function normalizeStudentSubmission(raw: unknown, questionIds: string[]): Record
       source_references: normalizeSourceRefs(answer),
     });
   }
-  const documents = asStringList(submission.normalized_documents).filter((path) => path.startsWith("/uploads/"));
+  const assets = normalizeAssets(submission.assets);
+  const derivedDocuments = [
+    ...answersById.values().flatMap((answer) => (
+      Array.isArray(answer.source_references)
+        ? answer.source_references.map((reference) => asUploadPath(asRecord(reference)?.path)).filter(Boolean)
+        : []
+    )),
+    ...Object.values(assets).flatMap((assetValue) => {
+      const asset = asRecord(assetValue);
+      return [asUploadPath(asset?.source_path), asUploadPath(asset?.path)].filter(Boolean);
+    }),
+  ];
+  const documents = [
+    ...asStringList(submission.normalized_documents).filter((path) => path.startsWith("/uploads/")),
+    ...derivedDocuments,
+  ];
+  const answers = groups.map(({ questionId, memberIds }) => {
+    const memberAnswers = memberIds.map((id) => answersById.get(id)).filter((answer): answer is Record<string, unknown> => Boolean(answer));
+    const childAnswers = memberIds.length > 1
+      ? memberIds.slice(1).map((id) => answersById.get(id)).filter((answer): answer is Record<string, unknown> => Boolean(answer))
+      : [];
+    const sources = childAnswers.length ? childAnswers : memberAnswers;
+    if (sources.length === 0) {
+      return { question_id: questionId, status: "blank", content: [], selected_options: [], source_references: [] };
+    }
+    const statuses = sources.map((answer) => asString(answer.status));
+    const status = statuses.includes("answered") ? "answered" : statuses.includes("uncertain") ? "uncertain" : "blank";
+    return {
+      question_id: questionId,
+      status,
+      content: uniqueRecords(sources.flatMap((answer) => Array.isArray(answer.content)
+        ? answer.content.filter((item): item is Record<string, unknown> => Boolean(asRecord(item)))
+        : [])),
+      selected_options: [...new Set(sources.flatMap((answer) => asStringList(answer.selected_options)))],
+      source_references: uniqueRecords(sources.flatMap((answer) => Array.isArray(answer.source_references)
+        ? answer.source_references.filter((item): item is Record<string, unknown> => Boolean(asRecord(item)))
+        : [])),
+    };
+  });
   return {
     student_id: asString(submission.student_id),
-    normalized_documents: documents.length ? documents : ["/uploads/unknown"],
-    assets: normalizeAssets(submission.assets),
-    answers: questionIds.map((questionId) => answersById.get(questionId) ?? {
-      question_id: questionId,
-      status: "blank",
-      content: [],
-      selected_options: [],
-      source_references: [],
-    }),
+    normalized_documents: [...new Set(documents.length ? documents : ["/uploads/unknown"])],
+    assets,
+    answers,
     uncertainties: asStringList(submission.uncertainties),
   };
 }
@@ -415,7 +546,8 @@ function normalizeStudentSubmission(raw: unknown, questionIds: string[]): Record
 export function normalizeAssessmentInput(value: unknown, options?: { includeStudents?: boolean }): Record<string, unknown> {
   const raw = asRecord(value) ?? {};
   const metadataIn = asRecord(raw.metadata) ?? {};
-  const questions = (Array.isArray(raw.questions) ? raw.questions : []).map((item, index) => normalizeQuestion(item, index));
+  const normalizedQuestions = (Array.isArray(raw.questions) ? raw.questions : []).map((item, index) => normalizeQuestion(item, index));
+  const { questions, groups } = collapseQuestionHierarchy(normalizedQuestions);
   const totalScore = questions.reduce((sum, question) => sum + (asNumber((asRecord(question.reference_solution) ?? {}).max_score) ?? 0), 0);
   const sourcePaths = questions.flatMap((question) => {
     const refs = Array.isArray(question.source_references) ? question.source_references : [];
@@ -436,8 +568,7 @@ export function normalizeAssessmentInput(value: unknown, options?: { includeStud
     uncertainties: asStringList(raw.uncertainties),
   };
   if (options?.includeStudents !== false && Array.isArray(raw.student_submissions)) {
-    const questionIds = questions.map((question) => asString(question.question_id));
-    draft.student_submissions = raw.student_submissions.map((item) => normalizeStudentSubmission(item, questionIds));
+    draft.student_submissions = raw.student_submissions.map((item) => normalizeStudentSubmission(item, groups));
   }
   return draft;
 }

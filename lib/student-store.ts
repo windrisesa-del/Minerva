@@ -10,7 +10,7 @@ import type {
   StudentStoreSnapshot,
 } from "./student-types";
 
-const STORE_PATH = join(homedir(), ".pi", "minerva", "students.json");
+const STORE_PATH = join(process.env.MINERVA_STATE_DIR || join(homedir(), ".pi", "minerva"), "students.json");
 const EMPTY_STORE: StudentStoreSnapshot = { version: 1, students: [], changes: [] };
 const MAX_TEXT_LENGTH = 2_000;
 const MAX_PORTRAIT_LENGTH = 1_800_000;

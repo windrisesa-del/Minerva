@@ -52,10 +52,12 @@ test("one assignment is presented as one dated merged processing session", async
   assert.match(route, /archivedWorkbenches/);
   assert.match(route, /displayTitle/);
   assert.match(route, /workbenchProcessingFailed/);
+  assert.match(route, /workbench\.currentSession\?\.privacyVersion === 1/);
   assert.match(route, /session\.role === "summarizer" && session\.status === "completed"/);
   assert.match(route, /running: running\.has\(workbench\.currentSession\.sessionId\)/);
   assert.match(route, /year: "numeric", month: "2-digit", day: "2-digit"/);
   assert.match(sessionsRoute, /minervaInternal: true/);
+  assert.match(sessionsRoute, /minervaAssignmentId: assignmentId/);
   assert.match(sessionsRoute, /workbench\.currentSession\.sessionId/);
   assert.match(sidebar, /!session\.minervaInternal/);
   assert.match(sidebar, /批改工作台/);
@@ -67,8 +69,11 @@ test("one assignment is presented as one dated merged processing session", async
   assert.match(sidebar, /body: JSON\.stringify\(body\)/);
   assert.doesNotMatch(sidebar, /workbench\.running \? "处理中" : workbench\.failed \? "已中断"/);
   assert.match(shell, /view=assignments&workbench=/);
+  assert.match(shell, /!studentCenterOpen && !assignmentCenterOpen && currentView/);
   assert.match(shell, /onOpenAssignmentWorkbench=\{handleOpenAssignmentWorkbench\}/);
   assert.match(shell, /workbenchAssignmentId \? \([\s\S]*<AssignmentWorkbench/);
+  assert.match(shell, /onTitleChange=\{setWorkbenchTitle\}/);
+  assert.match(component, /onTitleChange\?\.\(workbench\?\.displayTitle/);
   assert.match(shell, /onOpenWorkbench=\{handleOpenAssignmentWorkbench\}/);
   assert.match(shell, /\(showChat \|\| Boolean\(workbenchAssignmentId\)\) && <ShortcutOrb/);
   assert.match(shell, /showSessionActions=\{showChat\}/);

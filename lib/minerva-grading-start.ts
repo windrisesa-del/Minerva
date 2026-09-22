@@ -44,6 +44,17 @@ export function isGradingPipelineActive(assignmentId: string): boolean {
   return getActiveGradingAssignments().has(assignmentId);
 }
 
+export function claimGradingPipeline(assignmentId: string): boolean {
+  const active = getActiveGradingAssignments();
+  if (active.has(assignmentId)) return false;
+  active.add(assignmentId);
+  return true;
+}
+
+function releaseGradingPipeline(assignmentId: string): void {
+  getActiveGradingAssignments().delete(assignmentId);
+}
+
 async function finalizeAssignment(assignmentId: string): Promise<void> {
   const response = await fetch(`${dataApiUrl()}/api/minerva/write`, {
     method: "POST",
@@ -144,10 +155,11 @@ async function runStudentWorkers(options: {
   title: string;
   students: ProcessingStudent[];
   startedAt: string;
+  initialCompletedStudents: number;
+  totalStudents: number;
   unmatched?: { filename: string; reason: string }[];
 }) {
-  getActiveGradingAssignments().add(options.assignmentId);
-  let completedStudents = 0;
+  let completedStudents = options.initialCompletedStudents;
   try {
     const { failed } = await runStudentWaves({
       items: options.students,
@@ -182,7 +194,7 @@ async function runStudentWorkers(options: {
             startedAt: options.startedAt,
             status: "running",
             completedStudents,
-            totalStudents: options.students.length,
+            totalStudents: options.totalStudents,
           });
         } catch (error) {
           await worker.session.shutdown().catch(() => undefined);
@@ -207,7 +219,7 @@ async function runStudentWorkers(options: {
         startedAt: options.startedAt,
         status: "waiting_for_reconnect",
         completedStudents,
-        totalStudents: options.students.length,
+        totalStudents: options.totalStudents,
         error: `${failed.length} 名学生批改在 5 次重连后仍未完成，将在服务重连后继续`,
       });
       return;
@@ -220,7 +232,7 @@ async function runStudentWorkers(options: {
       startedAt: options.startedAt,
       status: "completed",
       completedStudents,
-      totalStudents: options.students.length,
+      totalStudents: options.totalStudents,
     });
     await startEvaluatorAfterGrading({
       cwd: options.cwd,
@@ -236,11 +248,11 @@ async function runStudentWorkers(options: {
       startedAt: options.startedAt,
       status: "waiting_for_reconnect",
       completedStudents,
-      totalStudents: options.students.length,
+      totalStudents: options.totalStudents,
       error: `自动批改中断：${reason}。已完成的学生结果已保留，将在服务重连后继续`,
     });
   } finally {
-    getActiveGradingAssignments().delete(options.assignmentId);
+    releaseGradingPipeline(options.assignmentId);
   }
 }
 
@@ -251,44 +263,77 @@ export async function startGradingSession(options: {
   unmatched?: { filename: string; reason: string }[];
 }) {
   if (!existsSync(options.cwd)) throw new Error(`Directory does not exist: ${options.cwd}`);
-  if (isGradingPipelineActive(options.assignmentId)) {
+  if (!claimGradingPipeline(options.assignmentId)) {
     return { sessionId: `grading-${options.assignmentId}`, assignmentId: options.assignmentId };
   }
-  const state = await readProcessingState(options.assignmentId);
-  const students = state.students.filter((student) => !student.grading_complete);
   const startedAt = new Date().toISOString();
-  if (!students.length) {
-    if (state.students.length === 0) throw new Error("没有可批改的学生提交");
-    await finalizeAssignment(options.assignmentId);
-    await startEvaluatorAfterGrading({
-      cwd: options.cwd,
-      assignmentId: options.assignmentId,
-      title: options.title,
-    });
-    const run = await upsertGradingRun({
+  let handedOff = false;
+  let completedStudents = 0;
+  let totalStudents = 0;
+  try {
+    const state = await readProcessingState(options.assignmentId);
+    const students = state.students.filter((student) => !student.grading_complete);
+    totalStudents = state.students.length;
+    completedStudents = state.students.length - students.length;
+    if (!students.length) {
+      if (state.students.length === 0) throw new Error("没有可批改的学生提交");
+      await finalizeAssignment(options.assignmentId);
+      await startEvaluatorAfterGrading({
+        cwd: options.cwd,
+        assignmentId: options.assignmentId,
+        title: options.title,
+      });
+      const run = await upsertGradingRun({
+        assignmentId: options.assignmentId,
+        sessionId: `grading-${options.assignmentId}`,
+        title: options.title,
+        startedAt,
+        status: "completed",
+        completedStudents: state.students.length,
+        totalStudents: state.students.length,
+      });
+      return { sessionId: run.sessionId, assignmentId: options.assignmentId, run };
+    }
+    const initialCompletedStudents = completedStudents;
+    allowFileRoot(options.cwd);
+    invalidateSessionListCache();
+    const run: GradingRunRecord = await upsertGradingRun({
       assignmentId: options.assignmentId,
       sessionId: `grading-${options.assignmentId}`,
       title: options.title,
       startedAt,
-      status: "completed",
-      completedStudents: state.students.length,
+      status: "running",
+      completedStudents: initialCompletedStudents,
       totalStudents: state.students.length,
     });
+    handedOff = true;
+    void runStudentWorkers({
+      ...options,
+      students,
+      startedAt,
+      initialCompletedStudents,
+      totalStudents: state.students.length,
+    }).catch((error) => {
+      console.error("[minerva] grading pipeline failed unexpectedly:", error instanceof Error ? error.message : error);
+    });
     return { sessionId: run.sessionId, assignmentId: options.assignmentId, run };
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    await upsertGradingRun({
+      assignmentId: options.assignmentId,
+      sessionId: `grading-${options.assignmentId}`,
+      title: options.title,
+      startedAt,
+      status: "waiting_for_reconnect",
+      completedStudents,
+      totalStudents,
+      error: `自动批改启动失败：${reason}。已保存数据会在服务恢复后继续处理`,
+      failedAt: new Date().toISOString(),
+    }).catch((storeError) => {
+      console.error("[minerva] failed to persist grading startup failure:", storeError);
+    });
+    throw error;
+  } finally {
+    if (!handedOff) releaseGradingPipeline(options.assignmentId);
   }
-  allowFileRoot(options.cwd);
-  invalidateSessionListCache();
-  const run: GradingRunRecord = await upsertGradingRun({
-    assignmentId: options.assignmentId,
-    sessionId: `grading-${options.assignmentId}`,
-    title: options.title,
-    startedAt,
-    status: "running",
-    completedStudents: state.students.length - students.length,
-    totalStudents: state.students.length,
-  });
-  void runStudentWorkers({ ...options, students, startedAt }).catch((error) => {
-    console.error("[minerva] grading pipeline failed unexpectedly:", error instanceof Error ? error.message : error);
-  });
-  return { sessionId: run.sessionId, assignmentId: options.assignmentId, run };
 }

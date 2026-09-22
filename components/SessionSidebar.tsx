@@ -508,7 +508,10 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, studentCent
   const sessionRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const explorerRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fileExplorerRef = useRef<FileExplorerHandle>(null);
-  const catalogSessions = allSessions;
+  const catalogSessions = useMemo(
+    () => allSessions.filter((session) => !session.minervaInternal),
+    [allSessions],
+  );
 
   const loadSessions = useCallback(async (showLoading = false, force = false) => {
     let loadedSessions: SessionInfo[] | null = null;
@@ -538,7 +541,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, studentCent
       // is intentionally silent even if an older client marked them unread.
       const unreadEligibleIds = new Set(
         data.sessions
-          .filter((session) => session.relation?.kind !== "subagent")
+          .filter((session) => session.relation?.kind !== "subagent" && !session.minervaInternal)
           .map((session) => session.id),
       );
       setUnreadSessionIds((prev) => {
@@ -838,15 +841,20 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, studentCent
 
   // Auto-select cwd and restore session from URL on first load
   useEffect(() => {
-    if (catalogSessions.length === 0 || skipInitialProjectSelection) return;
+    if (allSessions.length === 0 || skipInitialProjectSelection) return;
 
     if (selectedCwd === null) {
       // If restoring a session, set cwd to match that session
       if (initialSessionId && !restoredRef.current) {
         restoredRef.current = true;
-        const target = catalogSessions.find((s) => s.id === initialSessionId);
+        const target = allSessions.find((s) => s.id === initialSessionId);
         if (target) {
           setSelectedCwd(target.cwd);
+          if (target.minervaInternal) {
+            if (target.minervaAssignmentId) onOpenAssignmentWorkbench?.(target.minervaAssignmentId);
+            else onInitialRestoreDone?.();
+            return;
+          }
           onSelectSession(target, true);
           return;
         }
@@ -856,7 +864,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, studentCent
       const projects = getRecentProjects(catalogSessions);
       if (projects.length > 0) setSelectedCwd(projects[0].root);
     }
-  }, [catalogSessions, selectedCwd, initialSessionId, skipInitialProjectSelection, onSelectSession, onInitialRestoreDone]);
+  }, [allSessions, catalogSessions, selectedCwd, initialSessionId, skipInitialProjectSelection, onOpenAssignmentWorkbench, onSelectSession, onInitialRestoreDone]);
 
   // Prefer an exact UI selection while a refetch is in flight. Once the
   // response catches up, the server-resolved path handles Windows case and
@@ -1047,8 +1055,8 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, studentCent
   // Per-project activity counts (running / unread) for the workspace selector.
   // Uses the same stable server key as the project list and filtering.
   const projectActivity = useMemo(
-    () => getProjectActivity(allSessions, runningSessionIds, unreadSessionIds),
-    [allSessions, runningSessionIds, unreadSessionIds],
+    () => getProjectActivity(catalogSessions, runningSessionIds, unreadSessionIds),
+    [catalogSessions, runningSessionIds, unreadSessionIds],
   );
 
   // Any activity in a project other than the one currently selected — shown as

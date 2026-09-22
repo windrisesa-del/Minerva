@@ -1,5 +1,11 @@
 import pytest
-from app.assignment_summary import assert_student_highlight_coverage, build_report_context, build_statistics, receipt_history
+from app.assignment_summary import (
+    assert_student_highlight_policy,
+    build_report_context,
+    build_statistics,
+    receipt_history,
+    report_profile_history,
+)
 
 
 def test_statistics_distinguish_blank_zero_and_unknown_and_deduplicate():
@@ -41,21 +47,44 @@ def test_receipt_history_keeps_buffer_changes():
     ]
 
 
-def test_report_must_follow_evaluator_significance():
+def test_report_profile_history_removes_private_buffer_data():
+    history = report_profile_history(receipt_history([{
+        "id": "a1",
+        "created_at": "2026-09-10",
+        "before": {"description": {"old": True}, "evidence_buffer": [{"candidate_id": "private-before"}]},
+        "after": {
+            "description": {"old": False},
+            "evidence_buffer": [{"candidate_id": "private-after"}],
+            "changes": [
+                {"path": "/description/learning_trajectory/recent_progress"},
+                {"path": "/evidence_buffer/private-after"},
+            ],
+        },
+    }]))
+    assert history[0]["before"] == {"description": {"old": True}}
+    assert history[0]["after"]["description"] == {"old": False}
+    assert [item["path"] for item in history[0]["after"]["changes"]] == [
+        "/description/learning_trajectory/recent_progress",
+    ]
+
+
+def test_report_only_allows_one_severe_anomaly_per_student():
     students = [
         {"student_id": "keep", "report_significance": {"include_in_teacher_report": True}},
         {"student_id": "skip", "report_significance": {"include_in_teacher_report": False}},
         {"student_id": "legacy"},
     ]
-    assert_student_highlight_coverage(students, [{"student_id": "keep"}])
-    assert_student_highlight_coverage(students, [
-        {"student_id": "keep"},
-        {"student_id": "skip", "type": "current_submission_anomaly"},
-    ])
-    with pytest.raises(ValueError, match="必须报告"):
-        assert_student_highlight_coverage(students, [])
-    with pytest.raises(ValueError, match="只能报告本次作业异常"):
-        assert_student_highlight_coverage(students, [{"student_id": "keep"}, {"student_id": "skip", "type": "progress"}])
+    assert_student_highlight_policy(students, [])
+    assert_student_highlight_policy(students, [{"student_id": "skip", "type": "severe_anomaly"}])
+    with pytest.raises(ValueError, match="只允许报告严重异常"):
+        assert_student_highlight_policy(students, [{"student_id": "keep", "type": "progress"}])
+    with pytest.raises(ValueError, match="应合并为一条"):
+        assert_student_highlight_policy(students, [
+            {"student_id": "keep", "type": "severe_anomaly"},
+            {"student_id": "keep", "type": "severe_anomaly"},
+        ])
+    with pytest.raises(ValueError, match="必须是对象"):
+        assert_student_highlight_policy(students, ["keep"])
 
 
 def test_report_context_combines_content_grading_and_updated_profiles():
@@ -81,7 +110,7 @@ def test_report_context_combines_content_grading_and_updated_profiles():
         "student_id": "s1", "student_name": "学生甲", "profile_snapshot_id": "p1",
         "description": {"problem_solving": {"reasoning_features": ["步骤清晰"]}},
         "evidence_buffer": [{"candidate_id": "c1"}], "changes": [{"id": "a1"}],
-        "report_significance": {"include_in_teacher_report": True}, "grades": [grade],
+        "report_significance": {"include_in_teacher_report": True, "buffer_candidate_ids": ["c1"]}, "grades": [grade],
     }]
     statistics = build_statistics(students, items)
     context = build_report_context("函数作业", students, items, statistics)
@@ -90,4 +119,5 @@ def test_report_context_combines_content_grading_and_updated_profiles():
     assert context["questions"][0]["student_results"][0]["grading_result_id"] == "g1"
     assert context["questions"][0]["student_results"][0]["grading_basis"] == "链式法则缺少外层系数"
     assert context["students"][0]["description"]["problem_solving"]["reasoning_features"] == ["步骤清晰"]
-    assert context["students"][0]["evidence_buffer"][0]["candidate_id"] == "c1"
+    assert "evidence_buffer" not in context["students"][0]
+    assert "buffer_candidate_ids" not in context["students"][0]["report_significance"]

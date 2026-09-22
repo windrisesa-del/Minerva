@@ -1071,6 +1071,7 @@ def _save_grading(session: Session, payload: dict[str, Any]) -> dict[str, Any]:
             select(AnswerAttempt)
             .where(AnswerAttempt.submission_id == submission.id)
             .order_by(AnswerAttempt.question_id, AnswerAttempt.attempt_number.desc(), AnswerAttempt.id.desc())
+            .with_for_update()
         )
     )
     answers_by_question: dict[UUID, AnswerAttempt] = {}

@@ -19,6 +19,7 @@ def _import_assignment(client: TestClient, title: str) -> dict | None:
         return None
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("A组_作业包/题目.pdf", b"question-sheet")
         archive.writestr("提交/1.jpg", b"ungraded-work")
     response = client.post(
         "/api/assignments/import",
@@ -581,7 +582,7 @@ def test_minerva_grading_skips_existing_ai_and_finalize_sets_graded() -> None:
             assert client.post(f"/api/assignments/{assignment_id}/summary/prepare", json={}).json()["id"] == report_id
             page = client.get(f"/api/summary/{report_id}/input", params={"resource": "students", "limit": 1}).json()
             assert "grades" not in page["records"][0]
-            assert "evidence_buffer" in page["records"][0]
+            assert "evidence_buffer" not in page["records"][0]
             assert page["records"][0]["report_significance"]["include_in_teacher_report"] is False
             assert page["has_more"] == (len(records) > 1)
             invalid = {"assignment_overview": {"text": "测试作业。", "question_ids": [question_id]},

@@ -489,7 +489,10 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       if (!includeState) return null;
 
       try {
-        const stateRes = await fetch(`/api/sessions/${encodeURIComponent(sid)}/state`);
+        // Agent runtime state is served by the canonical agent endpoint. Keeping
+        // this request on the same endpoint as prompt/event handling avoids a
+        // hard dependency on the optional session-state compatibility route.
+        const stateRes = await fetch(`/api/agent/${encodeURIComponent(sid)}`);
         if (!stateRes.ok) throw new Error(`HTTP ${stateRes.status}`);
         const agentState = await stateRes.json() as { running: boolean; state?: AgentStateResponse };
         if (sessionIdRef.current !== sid) return null;

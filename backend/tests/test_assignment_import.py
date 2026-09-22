@@ -26,6 +26,8 @@ def test_student_key_from_filename() -> None:
     assert student_key_from_filename("提交/1.webp") == "1"
     assert is_spec_file("题目.pdf")
     assert is_spec_file("作业/题目.pdf")
+    assert is_spec_file("A组_作业包/题目.pdf")
+    assert is_spec_file("A组_作业包/标准答案.pdf")
     assert not is_spec_file("1.jpg")
     assert not is_spec_file("1/题目.pdf")
 
@@ -69,6 +71,16 @@ def test_match_filename_number_and_unique_name() -> None:
 
     matched, reason = match_work_file("page.jpg", ROSTER)
     assert matched is None
+
+
+def test_match_rejects_conflicting_number_and_name() -> None:
+    matched, reason = match_work_file("1_雷思源.pdf", ROSTER)
+    assert matched is None
+    assert reason is not None and "指向不同学生" in reason
+
+    matched, reason = match_work_file("99_雷思源.pdf", ROSTER)
+    assert reason is None
+    assert matched is not None and matched.id == "b"
 
 
 def test_normalize_official_questions_accepts_locked_format() -> None:

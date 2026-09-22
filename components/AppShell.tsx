@@ -58,6 +58,7 @@ import type { FileViewerState } from "@/lib/file-viewer-state";
 import type { ToolEntry } from "@/lib/tool-presets";
 import { getSessionFamily } from "@/lib/session-family";
 import { getLastSettingsSection, type SettingsSection } from "@/lib/settings-navigation";
+import { skillExpansionToCommand } from "@/lib/slash-display";
 
 type SessionCopyField = "file" | "id" | "projectDir" | "gitBranch" | "gitWorktree";
 type AutoNameStatus =
@@ -66,8 +67,14 @@ type AutoNameStatus =
   | { kind: "success" }
   | { kind: "error"; message: string };
 
-const TOP_BAR_ICON_BUTTON_SIZE = 36;
+const TOP_BAR_ROW_HEIGHT = 44;
+const TOP_BAR_ICON_BUTTON_SIZE = 44;
 const AGENT_PANEL_WIDTH = 420;
+
+function sessionDisplayTitle(session: SessionInfo): string {
+  const firstMessage = (skillExpansionToCommand(session.firstMessage) ?? session.firstMessage).trim();
+  return session.name?.trim() || firstMessage.slice(0, 50) || session.id.slice(0, 12);
+}
 
 export function AppShell() {
   const router = useRouter();
@@ -158,6 +165,7 @@ export function AppShell() {
   ));
   const [workbenchProcessVisible, setWorkbenchProcessVisible] = useState(false);
   const [workbenchProcessAvailable, setWorkbenchProcessAvailable] = useState(false);
+  const [workbenchTitle, setWorkbenchTitle] = useState<string | null>(null);
   const [modelsRefreshKey, setModelsRefreshKey] = useState(0);
   const [projectTrust, setProjectTrust] = useState<ProjectTrustStatus | null>(null);
   const [projectTrustDialogOpen, setProjectTrustDialogOpen] = useState(false);
@@ -655,13 +663,13 @@ export function AppShell() {
       setRightPanelOpen(false);
       // Restore the workspace we switched to: its last open session, or keep
       // the default welcome page when none is remembered.
-      restoreWorkspaceContext(newProject);
+      if (!studentCenterOpen && !assignmentCenterOpen) restoreWorkspaceContext(newProject);
     }
     const currentView = new URLSearchParams(window.location.search).get("view");
-    if (currentView !== "students" && currentView !== "assignments") {
+    if (!studentCenterOpen && !assignmentCenterOpen && currentView !== "students" && currentView !== "assignments") {
       router.replace("/", { scroll: false });
     }
-  }, [activeCwd, invalidateWorkspaceRestore, newSessionCwd, router, selectedSession, restoreWorkspaceContext]);
+  }, [activeCwd, assignmentCenterOpen, invalidateWorkspaceRestore, newSessionCwd, router, selectedSession, restoreWorkspaceContext, studentCenterOpen]);
 
   const handleSelectSession = useCallback((session: SessionInfo, isRestore = false) => {
     invalidateWorkspaceRestore();
@@ -763,6 +771,7 @@ export function AppShell() {
   useEffect(() => {
     setWorkbenchProcessVisible(false);
     setWorkbenchProcessAvailable(false);
+    setWorkbenchTitle(null);
   }, [workbenchAssignmentId]);
 
   // Global keyboard shortcuts (handles Esc, Ctrl+Alt+N etc.)
@@ -1046,6 +1055,15 @@ export function AppShell() {
   }, [newSessionDraftKey]);
   const showDataCenter = studentCenterOpen || assignmentCenterOpen;
   const showChat = !showDataCenter && (selectedSession !== null || effectiveNewSessionCwd !== null);
+  const topBarTitle = studentCenterOpen
+    ? "学生中心"
+    : assignmentCenterOpen
+      ? (workbenchAssignmentId ? (workbenchTitle ?? "批改工作台") : "学生作业")
+      : selectedSession
+        ? sessionDisplayTitle(selectedSession)
+        : showChat
+          ? translate("i18n.newSession")
+          : null;
   const projectTrustCwd = selectedSession?.cwd ?? effectiveNewSessionCwd;
   // While restoring initial session from URL, don't show the placeholder
   const showPlaceholder = initialSessionRestored && !showChat;
@@ -1448,7 +1466,7 @@ export function AppShell() {
               </span>
             )}
             {costText && (
-              <span className="mobile-session-stat-cost" style={{ color: "var(--text)", fontWeight: 500, flexShrink: 0 }}>
+              <span className="mobile-session-stat-cost" style={{ flexShrink: 0 }}>
                 {costText}
               </span>
             )}
@@ -1490,7 +1508,7 @@ export function AppShell() {
               </span>
             )}
             {costText && (
-              <span style={{ display: "flex", alignItems: "center", color: "var(--text)", fontWeight: 500 }}>
+              <span style={{ display: "flex", alignItems: "center" }}>
                 {costText}
               </span>
             )}
@@ -1687,7 +1705,7 @@ export function AppShell() {
       <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: 0, position: "relative" }}>
         {/* Top bar with sidebar toggle */}
         <div ref={topBarRef} className="minerva-topbar" style={{ flexShrink: 0, background: "var(--bg-panel)" }}>
-        <div className="minerva-topbar-row" style={{ display: "flex", alignItems: "center", position: "relative", borderBottom: "none", height: "calc(36px + env(safe-area-inset-top))", paddingTop: "env(safe-area-inset-top)" }}>
+        <div className="minerva-topbar-row" style={{ display: "flex", alignItems: "center", position: "relative", borderBottom: "none", height: `calc(${TOP_BAR_ROW_HEIGHT}px + env(safe-area-inset-top))`, paddingTop: "env(safe-area-inset-top)" }}>
           <button
             onClick={handleSidebarToggle}
              title={sidebarOpen ? translate("sidebar.hide") : translate("sidebar.show")}
@@ -1711,6 +1729,9 @@ export function AppShell() {
               </svg>
             )}
           </button>
+          {topBarTitle ? (
+            <h1 className="minerva-topbar-title" title={topBarTitle}>{topBarTitle}</h1>
+          ) : null}
           {isMobile && (
             <div
               ref={mobileToolbarRef}
@@ -2049,6 +2070,7 @@ export function AppShell() {
                 onBack={handleOpenAssignmentCenter}
                 showProcess={workbenchProcessVisible}
                 onProcessAvailabilityChange={setWorkbenchProcessAvailable}
+                onTitleChange={setWorkbenchTitle}
                 onInitialReady={handleStartupAssignmentCenterReady}
               />
             ) : (
@@ -2200,7 +2222,7 @@ export function AppShell() {
           display: "flex",
           alignItems: "center",
           flexShrink: 0,
-          height: "calc(36px + env(safe-area-inset-top))",
+          height: `calc(${TOP_BAR_ROW_HEIGHT}px + env(safe-area-inset-top))`,
           paddingTop: "env(safe-area-inset-top)",
           background: "var(--bg-panel)",
           borderBottom: "1px solid var(--border)",

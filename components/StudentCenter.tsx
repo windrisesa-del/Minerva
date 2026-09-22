@@ -40,15 +40,6 @@ type StudentProfile = {
     evidence_refs: EvidenceRef[];
   };
 };
-type BufferItem = {
-  candidate_id?: string;
-  claim?: string;
-  status?: string;
-  target?: { profile_section?: string; knowledge_id?: string; attribute?: string };
-  evidence?: Array<{ relationship?: string }>;
-  assessment?: { confidence?: number; reason?: string; missing_evidence?: string[] };
-};
-
 const PROBLEM_FIELDS = [
   { key: "strong_problem_types", label: "擅长的问题类型" },
   { key: "difficult_problem_types", label: "困难的问题类型" },
@@ -375,7 +366,7 @@ export function StudentCenter({ onInitialReady }: { onInitialReady?: () => void 
   const [importStudents, setImportStudents] = useState<StudentInput[]>([]);
   const [importName, setImportName] = useState("");
   const importInputRef = useRef<HTMLInputElement>(null);
-  const [observation, setObservation] = useState<{ description: StudentProfile; buffer: BufferItem[]; teacherFields: string[] } | null>(null);
+  const [observation, setObservation] = useState<{ description: StudentProfile; teacherFields: string[] } | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -399,17 +390,15 @@ export function StudentCenter({ onInitialReady }: { onInitialReady?: () => void 
     let cancelled = false;
     void requestJson<{
       description?: { description?: Record<string, unknown>; teacher_fields?: string[] };
-      evidence_buffer?: { items?: BufferItem[] };
     }>(`/api/student-observations?studentId=${encodeURIComponent(selectedId)}`).then((body) => {
       if (cancelled) return;
       const description = normalizeStudentProfile(body.description?.description);
-      const buffer = body.evidence_buffer?.items ?? [];
       const teacherFields = body.description?.teacher_fields ?? [];
-      setObservation({ description, buffer, teacherFields });
+      setObservation({ description, teacherFields });
     }).catch(() => {
       if (cancelled) return;
       const description = emptyStudentProfile();
-      setObservation({ description, buffer: [], teacherFields: [] });
+      setObservation({ description, teacherFields: [] });
     });
     return () => { cancelled = true; };
   }, [selectedId]);

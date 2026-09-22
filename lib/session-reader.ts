@@ -21,6 +21,22 @@ const SESSION_HEADER_MAX_BYTES = 64 * 1024;
 const SESSION_RELATION_MAX_BYTES = 256 * 1024;
 const SESSION_RELATION_MAX_LINES = 2;
 const SESSION_RESULT_MAX_BYTES = 256 * 1024;
+const MINERVA_INTERNAL_SESSION_PREFIX = "pi-web:minerva-";
+
+export function readMinervaSessionMetadata(
+  entries: readonly { type?: string; customType?: string; data?: unknown }[],
+): { assignmentId?: string } | null {
+  for (const entry of entries) {
+    if (entry.type !== "custom" || !entry.customType?.startsWith(MINERVA_INTERNAL_SESSION_PREFIX)) continue;
+    const data = entry.data;
+    const assignmentId = data && typeof data === "object" && "assignmentId" in data
+      && typeof (data as { assignmentId?: unknown }).assignmentId === "string"
+      ? (data as { assignmentId: string }).assignmentId
+      : undefined;
+    return assignmentId ? { assignmentId } : {};
+  }
+  return null;
+}
 
 function readBoundedLines(filePath: string, maxBytes: number, maxLines: number): string[] {
   const fd = openSync(filePath, "r");
@@ -148,12 +164,13 @@ async function loadAllSessions(): Promise<SessionInfo[]> {
   const sessions = piSessions.map((s) => {
     cacheSessionPath(s.id, s.path);
     const originSessionId = s.parentSessionPath ? pathToId.get(sessionPathKey(s.parentSessionPath)) : undefined;
+    let relationEntries: SessionEntry[] = [];
     let subagent = null;
-    if (s.parentSessionPath) {
-      try {
-        subagent = readSubagentRun(readSessionRelationEntries(s.path), s.id, s.path);
-      } catch { /* malformed or concurrently removed session */ }
-    }
+    try {
+      relationEntries = readSessionRelationEntries(s.path);
+      if (s.parentSessionPath) subagent = readSubagentRun(relationEntries, s.id, s.path);
+    } catch { /* malformed or concurrently removed session */ }
+    const minerva = readMinervaSessionMetadata(relationEntries);
     return {
       path: s.path,
       id: s.id,
@@ -170,6 +187,10 @@ async function loadAllSessions(): Promise<SessionInfo[]> {
           ? { relation: { kind: "fork" as const, ...(originSessionId ? { originSessionId } : {}) } }
           : {}),
       transient: false,
+      ...(minerva ? {
+        minervaInternal: true,
+        ...(minerva.assignmentId ? { minervaAssignmentId: minerva.assignmentId } : {}),
+      } : {}),
     };
   });
   return attachSessionProjectInfo(sessions);

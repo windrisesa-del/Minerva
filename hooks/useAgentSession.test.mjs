@@ -7,6 +7,19 @@ const chatWindowSource = await readFile(new URL("../components/ChatWindow.tsx", 
 const chatInputSource = await readFile(new URL("../components/ChatInput.tsx", import.meta.url), "utf8");
 const appShellSource = await readFile(new URL("../components/AppShell.tsx", import.meta.url), "utf8");
 
+test("loads runtime state from the canonical agent endpoint", () => {
+  const loadSessionSource = source.slice(
+    source.indexOf("  const loadSession = useCallback"),
+    source.indexOf("  const loadEarlierMessages = useCallback"),
+  );
+
+  assert.match(
+    loadSessionSource,
+    /fetch\(`\/api\/agent\/\$\{encodeURIComponent\(sid\)\}`\)/,
+  );
+  assert.doesNotMatch(loadSessionSource, /\/api\/sessions\/.*\/state/);
+});
+
 test("keeps the session event stream open through the idle grace window", () => {
   const finishSource = source.slice(
     source.indexOf("const finishPromptWithoutStream"),

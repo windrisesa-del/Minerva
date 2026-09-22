@@ -39,6 +39,8 @@ test("Assignment page reads the FastAPI proxy and preserves evidence boundaries"
   assert.match(component, /\/api\/evaluator\/runs/);
   assert.match(component, /\/api\/adapter\/start/);
   assert.match(component, /\/api\/grading\/runs/);
+  assert.match(component, /waitingForReconnect/);
+  assert.match(component, /run\.status === "waiting_for_reconnect"/);
   assert.match(component, /自动处理失败/);
   assert.match(component, /visibleProcessingFailure\.error/);
   assert.match(component, /\.\.\.Object\.values\(evaluatorRuns\)/);
@@ -47,6 +49,7 @@ test("Assignment page reads the FastAPI proxy and preserves evidence boundaries"
   assert.match(component, /关闭这条失败提醒/);
   assert.match(adapterPipeline, /本次导入数据已清理，请重新导入/);
   assert.match(adapterPipeline, /method: "DELETE"/);
+  assert.match(adapterPipeline, /draft_only=true/);
   assert.match(component, /sources: body\.adapter_sources/);
   assert.doesNotMatch(component, /重新批改/);
   assert.doesNotMatch(component, />\s*开始观察\s*</);

@@ -110,7 +110,11 @@ def student_key_from_filename(filename: str) -> str | None:
 
 
 def _is_generic_folder(name: str) -> bool:
-    return name.strip().casefold() in {item.casefold() for item in GENERIC_FOLDER_NAMES}
+    normalized = name.strip().casefold()
+    if normalized in {item.casefold() for item in GENERIC_FOLDER_NAMES}:
+        return True
+    compact = re.sub(r"[\s_-]+", "", normalized)
+    return compact.endswith(("作业包", "assignmentpackage", "homeworkpackage"))
 
 
 def is_spec_file(path: str) -> bool:
@@ -146,29 +150,42 @@ def match_work_file(
     parents = parts[:-1]
     filename = parts[-1]
 
+    haystacks = [*reversed(parents), Path(filename).stem]
+    name_hits = [
+        student
+        for haystack in haystacks
+        if haystack and not _is_generic_folder(haystack)
+        for student in students
+        if len(student.name.strip()) >= 2 and student.name.strip().casefold() in haystack.casefold()
+    ]
+    name_hit_ids = {student.id for student in name_hits}
+    unique_name_match = next((student for student in name_hits if len(name_hit_ids) == 1), None)
+
+    def resolve_number(token: str) -> tuple[RosterStudent | None, str | None]:
+        matches = by_number.get(token.casefold(), [])
+        if len(matches) == 1:
+            matched = matches[0]
+            if unique_name_match is not None and unique_name_match.id != matched.id:
+                return None, f"文件名中的学号 {token} 与姓名 {unique_name_match.name} 指向不同学生"
+            return matched, None
+        if not matches and unique_name_match is not None:
+            return unique_name_match, None
+        if not matches:
+            return None, f"学号 {token} 不在所选班级中"
+        return None, f"学号 {token} 对应多名学生"
+
     for parent in reversed(parents):
         if _is_generic_folder(parent):
             continue
         token = first_token(parent)
         if not token or not _looks_like_student_number(token, by_number):
             continue
-        matches = by_number.get(token.casefold(), [])
-        if len(matches) == 1:
-            return matches[0], None
-        if not matches:
-            return None, f"学号 {token} 不在所选班级中"
-        return None, f"学号 {token} 对应多名学生"
+        return resolve_number(token)
 
     token = first_token(filename)
     if token and _looks_like_student_number(token, by_number):
-        matches = by_number.get(token.casefold(), [])
-        if len(matches) == 1:
-            return matches[0], None
-        if not matches:
-            return None, f"学号 {token} 不在所选班级中"
-        return None, f"学号 {token} 对应多名学生"
+        return resolve_number(token)
 
-    haystacks = [*reversed(parents), Path(filename).stem]
     for haystack in haystacks:
         if not haystack or _is_generic_folder(haystack):
             continue
@@ -335,6 +352,8 @@ def import_ungraded_assignment(
         for student in students
     ]
     spec_files = [item for item in files if is_spec_file(item.relative_path)]
+    if not questions and not spec_files:
+        raise ValueError("未检测到题目或标准答案文件。请使用题目、试卷、标准答案或参考答案作为文件名")
     work_files = [item for item in files if item not in spec_files]
     grouped: dict[str, list[IncomingFile]] = defaultdict(list)
     unmatched: list[dict[str, str]] = []

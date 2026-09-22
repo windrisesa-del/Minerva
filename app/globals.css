@@ -45,6 +45,9 @@
   --success: #5b9b68;
   --warning: #bd8424;
   --error: #c64545;
+  --font-source-sans: "Segoe UI Variable", "Segoe UI";
+  --font-noto-sans-sc: "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC";
+  --font-noto-mono: "Cascadia Mono", "Cascadia Code", Consolas;
   --font-display: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", "Noto Serif CJK SC", "Songti SC", STSong, Georgia, serif;
   --font-ui: var(--font-source-sans), var(--font-noto-sans-sc), "Microsoft YaHei UI", "PingFang SC", sans-serif;
   --shadow-soft: 0 1px 2px rgba(43, 34, 25, 0.05), 0 12px 30px rgba(43, 34, 25, 0.06);
@@ -233,6 +236,38 @@ select:focus-visible,
   border-bottom: 0 !important;
   background: transparent;
   box-shadow: none;
+}
+
+.minerva-topbar-title {
+  flex: 1 1 0%;
+  min-width: 0;
+  margin: 0;
+  padding: 0 12px;
+  overflow: hidden;
+  color: var(--text);
+  font-family: var(--font-display);
+  font-size: 16px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+h1.minerva-topbar-title {
+  font-family: var(--font-display);
+  font-size: 16px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+@media (max-width: 640px) {
+  .minerva-topbar-title {
+    flex: 0 1 auto;
+    max-width: 42%;
+    padding-inline: 8px;
+    font-size: 15px;
+  }
 }
 
 .minerva-topbar-row > button,
@@ -602,20 +637,6 @@ html.dark .minerva-chat::before {
   position: relative;
 }
 
-.minerva-welcome::before {
-  position: absolute;
-  top: 8%;
-  left: 50%;
-  width: min(720px, 76vw);
-  height: min(420px, 52vh);
-  border: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
-  border-radius: 48% 52% 46% 54% / 58% 44% 56% 42%;
-  background: color-mix(in srgb, var(--surface-card) 26%, transparent);
-  content: "";
-  opacity: 0.54;
-  pointer-events: none;
-  transform: translateX(-50%) rotate(-2deg);
-}
 
 .minerva-welcome-card {
   position: relative;
@@ -780,9 +801,6 @@ html.dark .minerva-chat::before {
   }
   .minerva-wordmark {
     font-size: 26px !important;
-  }
-  .minerva-welcome::before {
-    width: 90vw;
   }
 }
 

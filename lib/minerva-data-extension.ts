@@ -186,10 +186,11 @@ async function loadRecordAttachments(
   images: Array<{ type: "image"; data: string; mimeType: string }>;
   totalImages: number;
   nextAttachmentOffset: number | null;
+  failedAttachments: string[];
 }> {
   const jsonOnly = Boolean(options?.jsonOnly);
   const allowed = attachmentKindsForResource(resource, options);
-  if (!allowed) return { images: [], totalImages: 0, nextAttachmentOffset: null };
+  if (!allowed) return { images: [], totalImages: 0, nextAttachmentOffset: null, failedAttachments: [] };
   if (jsonOnly || (!options?.allAssignmentFiles && (resource === "questions" || resource === "assignment_items"))) {
     dropQuestionSourceFiles(records);
   }
@@ -197,6 +198,7 @@ async function loadRecordAttachments(
   collectAttachments(records, attachments);
   const jsonByKey = new Map<string, unknown>();
   const loadedJsonKeys = new Set<string>();
+  const failedAttachments: string[] = [];
   for (const attachment of attachments) {
     const storageKey = typeof attachment.storage_key === "string" ? attachment.storage_key : "";
     const kind = classifyMinervaAttachment(attachment);
@@ -205,9 +207,15 @@ async function loadRecordAttachments(
     loadedJsonKeys.add(storageKey);
     try {
       const response = await fetch(`${dataApiUrl()}${storageKey}`, { cache: "no-store" });
-      if (!response.ok) continue;
+      if (!response.ok) {
+        failedAttachments.push(storageKey);
+        continue;
+      }
       const bytes = Buffer.from(await response.arrayBuffer());
-      if (bytes.length === 0 || (!options?.allAssignmentFiles && bytes.length > MAX_ATTACHMENT_BYTES)) continue;
+      if (bytes.length === 0 || (!options?.allAssignmentFiles && bytes.length > MAX_ATTACHMENT_BYTES)) {
+        failedAttachments.push(storageKey);
+        continue;
+      }
       const text = bytes.toString("utf8");
       try {
         const parsed = JSON.parse(text);
@@ -217,7 +225,7 @@ async function loadRecordAttachments(
         jsonByKey.set(storageKey, text);
       }
     } catch {
-      // Keep the JSON metadata even if a single attachment cannot be loaded.
+      failedAttachments.push(storageKey);
     }
   }
   if (jsonByKey.size > 0) injectJsonContent(records, jsonByKey);
@@ -239,22 +247,29 @@ async function loadRecordAttachments(
     const storageKey = String(attachment.storage_key);
     try {
       const response = await fetch(`${dataApiUrl()}${storageKey}`, { cache: "no-store" });
-      if (!response.ok) continue;
+      if (!response.ok) {
+        failedAttachments.push(storageKey);
+        continue;
+      }
       const bytes = Buffer.from(await response.arrayBuffer());
-      if (bytes.length === 0 || (!options?.allAssignmentFiles && bytes.length > MAX_ATTACHMENT_BYTES)) continue;
+      if (bytes.length === 0 || (!options?.allAssignmentFiles && bytes.length > MAX_ATTACHMENT_BYTES)) {
+        failedAttachments.push(storageKey);
+        continue;
+      }
       images.push({
         type: "image",
         data: bytes.toString("base64"),
         mimeType: typeof attachment.mime_type === "string" ? attachment.mime_type : "image/png",
       });
     } catch {
-      // Keep the attachment manifest even if a single image cannot be loaded.
+      failedAttachments.push(storageKey);
     }
   }
   return {
     images,
     totalImages: imageAttachments.length,
     nextAttachmentOffset: offset + selected.length < imageAttachments.length ? offset + selected.length : null,
+    failedAttachments: [...new Set(failedAttachments)],
   };
 }
 
@@ -284,6 +299,11 @@ export function createMinervaDataExtension(options?: {
     name: HOST_MINERVA_DATA_EXTENSION_NAME,
     hidden: true,
     factory: (pi) => {
+      let graderReadFailed = false;
+      const readError = (message: string) => {
+        if (graderMode) graderReadFailed = true;
+        return errorResult(message);
+      };
       pi.registerTool(defineTool({
         name: "read_minerva",
         label: "Read Minerva",
@@ -347,37 +367,37 @@ export function createMinervaDataExtension(options?: {
         }),
         async execute(_toolCallId, params) {
           if (evaluatorMode && !EVALUATOR_READ_RESOURCES.has(params.resource)) {
-            return errorResult(`Evaluator 不能读取观察任务范围外的资源: ${params.resource}`);
+            return readError(`Evaluator 不能读取观察任务范围外的资源: ${params.resource}`);
           }
           if (evaluatorMode && params.assignment_id && params.assignment_id !== evaluatorAssignmentId) {
-            return errorResult("Evaluator 只能读取当前会话绑定的 assignment_id");
+            return readError("Evaluator 只能读取当前会话绑定的 assignment_id");
           }
           if (evaluatorMode && params.include_private) {
-            return errorResult("Evaluator 不能读取学生隐私字段");
+            return readError("Evaluator 不能读取学生隐私字段");
           }
           if (evaluatorMode && params.student_id && params.student_id !== evaluatorStudentId) {
-            return errorResult("Evaluator 只能读取当前会话绑定的 student_id");
+            return readError("Evaluator 只能读取当前会话绑定的 student_id");
           }
           if (evaluatorMode && params.submission_id && params.submission_id !== evaluatorSubmissionId) {
-            return errorResult("Evaluator 只能读取当前会话绑定的 submission_id");
+            return readError("Evaluator 只能读取当前会话绑定的 submission_id");
           }
           if (graderMode && !GRADER_READ_RESOURCES.has(params.resource)) {
-            return errorResult(`Marker 不能读取当前作业范围外的资源: ${params.resource}`);
+            return readError(`Marker 不能读取当前作业范围外的资源: ${params.resource}`);
           }
           if (graderMode && params.assignment_id && params.assignment_id !== graderAssignmentId) {
-            return errorResult("Marker 只能读取当前会话绑定的 assignment_id");
+            return readError("Marker 只能读取当前会话绑定的 assignment_id");
           }
           if (graderMode && params.resource === "assignments" && params.id && params.id !== graderAssignmentId) {
-            return errorResult("Marker 只能读取当前会话绑定的 assignment_id");
+            return readError("Marker 只能读取当前会话绑定的 assignment_id");
           }
           if (graderMode && graderStudentId && params.student_id && params.student_id !== graderStudentId) {
-            return errorResult("Marker 只能读取当前工作会话绑定的 student_id");
+            return readError("Marker 只能读取当前工作会话绑定的 student_id");
           }
           if (graderMode && graderSubmissionId && params.submission_id && params.submission_id !== graderSubmissionId) {
-            return errorResult("Marker 只能读取当前工作会话绑定的 submission_id");
+            return readError("Marker 只能读取当前工作会话绑定的 submission_id");
           }
           if (graderMode && params.resource === "answer_attempts" && !params.question_id) {
-            return errorResult("Marker 读取学生作答时必须提供 question_id，以便只加载当前题目的 JSON 和图片");
+            return readError("Marker 读取学生作答时必须提供 question_id，以便只加载当前题目的 JSON 和图片");
           }
           const query = new URLSearchParams({ resource: params.resource });
           if (graderMode && params.resource === "assignments") query.set("id", graderAssignmentId);
@@ -409,7 +429,7 @@ export function createMinervaDataExtension(options?: {
             });
             const payload = await response.json().catch(() => ({ detail: "数据服务返回了无效响应" }));
             if (!response.ok) {
-              return errorResult(typeof payload.detail === "string" ? payload.detail : `读取失败 HTTP ${response.status}`);
+              return readError(typeof payload.detail === "string" ? payload.detail : `读取失败 HTTP ${response.status}`);
             }
             const records = Array.isArray(payload.records) ? payload.records : [];
             const attachments = await loadRecordAttachments(params.resource, records, {
@@ -419,6 +439,9 @@ export function createMinervaDataExtension(options?: {
               attachmentOffset: params.attachment_offset,
               attachmentLimit: params.attachment_limit,
             });
+            if (attachments.failedAttachments.length > 0) {
+              return readError(`附件读取失败，不能继续处理：${attachments.failedAttachments.join(", ")}`);
+            }
             const visiblePayload = graderMode
               ? {
                   ...payload,
@@ -441,7 +464,7 @@ export function createMinervaDataExtension(options?: {
               },
             };
           } catch (error) {
-            return errorResult(error instanceof Error ? error.message : String(error));
+            return readError(error instanceof Error ? error.message : String(error));
           }
         },
       }));
@@ -559,6 +582,9 @@ export function createMinervaDataExtension(options?: {
           }))),
         }),
         async execute(_toolCallId, params) {
+          if (graderMode && graderReadFailed) {
+            return errorResult("本次 Marker 会话此前读取数据或附件失败，禁止写入成绩；请等待主机自动重试");
+          }
           if (evaluatorMode && (params as { finalize?: boolean }).finalize) {
             return errorResult("Evaluator 不能 finalize");
           }

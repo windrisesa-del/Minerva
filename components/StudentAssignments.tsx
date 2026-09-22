@@ -255,10 +255,12 @@ export function StudentAssignments({ onInitialReady, onOpenWorkbench }: Props) {
   useEffect(() => {
     const gradingRunning = Object.values(gradingRuns).some((run) => run.running);
     const evaluatorRunning = Object.values(evaluatorRuns).some((run) => run.running);
+    const waitingForReconnect = [...Object.values(gradingRuns), ...Object.values(evaluatorRuns)]
+      .some((run) => run.status === "waiting_for_reconnect");
     const waitingForObserver = (data?.assignments ?? []).some((item) => (
       item.status === "graded" && Boolean(gradingRuns[item.id]) && !evaluatorRuns[item.id]
     ));
-    if (!gradingRunning && !evaluatorRunning && !waitingForObserver) return;
+    if (!gradingRunning && !evaluatorRunning && !waitingForObserver && !waitingForReconnect) return;
     const timer = window.setInterval(() => {
       void loadGradingRuns();
     }, 4000);

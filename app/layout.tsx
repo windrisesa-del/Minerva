@@ -1,5 +1,4 @@
 import type { Metadata, Viewport } from "next";
-import { Noto_Sans_Mono, Noto_Sans_SC, Source_Sans_3 } from "next/font/google";
 import { PwaRegistration } from "@/components/PwaRegistration";
 import "katex/dist/katex.min.css";
 import "./globals.css";
@@ -7,25 +6,6 @@ import "./settings.css";
 import "./student-center.css";
 import "./student-assignments.css";
 import "./startup-splash.css";
-
-const notoSansMono = Noto_Sans_Mono({
-  subsets: ["latin", "cyrillic"],
-  variable: "--font-noto-mono",
-  display: "swap",
-});
-
-const sourceSans = Source_Sans_3({
-  subsets: ["latin"],
-  variable: "--font-source-sans",
-  display: "swap",
-});
-
-const notoSansSc = Noto_Sans_SC({
-  weight: "variable",
-  variable: "--font-noto-sans-sc",
-  display: "swap",
-  preload: false,
-});
 
 export const metadata: Metadata = {
   title: "Minerva",
@@ -81,7 +61,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" translate="no" className={`${sourceSans.variable} ${notoSansSc.variable} ${notoSansMono.variable} notranslate`} suppressHydrationWarning>
+    <html lang="en" translate="no" className="notranslate" suppressHydrationWarning>
       <head>
         <meta name="google" content="notranslate" />
         <script

@@ -100,3 +100,13 @@ test("Student records are local, audited, and do not expose a delete route", asy
   assert.match(detailRoute, /syncStudentsToDatabase/);
   assert.doesNotMatch(detailRoute, /export async function DELETE/);
 });
+
+test("Student Center observation endpoint does not expose the Evaluator evidence buffer", async () => {
+  const [center, observationRoute] = await Promise.all([
+    read("components/StudentCenter.tsx"),
+    read("app/api/student-observations/route.ts"),
+  ]);
+  assert.doesNotMatch(center, /BufferItem|evidence_buffer/);
+  assert.doesNotMatch(observationRoute, /resource=evidence_buffer|kind:\s*"evidence_buffer"|payload\.items/);
+  assert.match(observationRoute, /resource=student_description/);
+});

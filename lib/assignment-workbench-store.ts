@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
 const STORE_PATH = process.env.MINERVA_WORKBENCH_STORE_PATH
-  || join(homedir(), ".pi", "minerva", "assignment-workbenches.json");
+  || join(process.env.MINERVA_STATE_DIR || join(homedir(), ".pi", "minerva"), "assignment-workbenches.json");
 
 export type WorkbenchRole = "adapter" | "marker" | "evaluator" | "summarizer";
 export type WorkbenchSessionStatus = "running" | "completed" | "failed";
@@ -14,6 +14,7 @@ export interface WorkbenchCurrentSession {
   status: WorkbenchCurrentSessionStatus;
   compacted: boolean;
   createdAt: string;
+  privacyVersion?: 1;
   error?: string;
 }
 
@@ -87,6 +88,7 @@ function validateStore(value: unknown): WorkbenchStore {
             status: raw.currentSession.status,
             compacted: raw.currentSession.compacted === true,
             createdAt: typeof raw.currentSession.createdAt === "string" ? raw.currentSession.createdAt : new Date().toISOString(),
+            privacyVersion: raw.currentSession.privacyVersion === 1 ? 1 : undefined,
             error: typeof raw.currentSession.error === "string" ? raw.currentSession.error : undefined,
           }
         : undefined,

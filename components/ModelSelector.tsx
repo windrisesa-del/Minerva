@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { createPortal } from "react-dom";
 import { useI18n } from "@/hooks/useI18n";
 import { useIsMobile } from "@/hooks/useIsMobile";
 
@@ -228,7 +229,7 @@ export function ModelSelector({
           ? { left: 8, right: 8, maxWidth: "calc(100vw - 16px)" }
           : { left: anchorRect.left, width: "max-content", minWidth: anchorRect.width, maxWidth: Math.max(anchorRect.width, viewportWidth - anchorRect.left - 8) };
 
-        return (
+        return createPortal(
           <div
             ref={panelRef}
             role="listbox"
@@ -304,7 +305,8 @@ export function ModelSelector({
                 </div>
               ))}
             </div>
-          </div>
+          </div>,
+          document.body,
         );
       })()}
     </div>

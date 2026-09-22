@@ -33,17 +33,60 @@ def receipt_history(history_records):
             for h in history_records]
 
 
-def assert_student_highlight_coverage(students, highlights):
-    highlighted = {}
+def report_profile_history(history_records):
+    """Expose profile provenance to reporting without exposing Evaluator's private buffer."""
+    result = []
+    for history in history_records:
+        before = history.get("before") or {}
+        after = history.get("after") or {}
+        result.append({
+            "id": history.get("id"),
+            "created_at": history.get("created_at"),
+            "before": {"description": deepcopy(before.get("description"))},
+            "after": {
+                "description": deepcopy(after.get("description")),
+                "changes": [
+                    deepcopy(change)
+                    for change in (after.get("changes") or [])
+                    if str(change.get("path") or "").startswith("/description/")
+                ],
+            },
+        })
+    return result
+
+
+def report_significance_without_buffer(value):
+    significance = deepcopy(value) if isinstance(value, dict) else {}
+    significance.pop("buffer_candidate_ids", None)
+    return significance
+
+
+def report_student_snapshot(student):
+    """Copy the Evaluator receipt into report storage without its private buffer state."""
+    snapshot = {
+        key: deepcopy(value)
+        for key, value in student.items()
+        if key != "evidence_buffer"
+    }
+    snapshot["changes"] = report_profile_history(student.get("changes") or [])
+    snapshot["report_significance"] = report_significance_without_buffer(student.get("report_significance"))
+    return snapshot
+
+
+def assert_student_highlight_policy(students, highlights):
+    student_ids = {student["student_id"] for student in students}
+    highlighted = set()
     for item in highlights:
-        highlighted.setdefault(item.get("student_id"), []).append(item)
-    for student in students:
-        include = (student.get("report_significance") or {}).get("include_in_teacher_report")
-        student_id = student["student_id"]
-        if include is True and student_id not in highlighted:
-            raise ValueError("必须报告 Evaluator 标记为纳入报告的学生")
-        if include is False and any(item.get("type") != "current_submission_anomaly" for item in highlighted.get(student_id, [])):
-            raise ValueError("Evaluator 未纳入报告的学生只能报告本次作业异常")
+        if not isinstance(item, dict):
+            raise ValueError("学生重点必须是对象")
+        student_id = item.get("student_id")
+        if student_id not in student_ids:
+            raise ValueError("学生不在本报告范围")
+        if item.get("type") != "severe_anomaly":
+            raise ValueError("学生重点只允许报告严重异常")
+        if student_id in highlighted:
+            raise ValueError("同一学生的严重异常应合并为一条")
+        highlighted.add(student_id)
 
 
 def complete_evaluation(session, assignment_id, student_id, description, evidence_buffer=None, report_significance=None):
@@ -201,9 +244,8 @@ def build_report_context(title, students, items, statistics):
             "max_score": row["max_score"],
             "score_rate": row["score_rate"],
             "description": student.get("description"),
-            "evidence_buffer": student.get("evidence_buffer") or [],
-            "profile_changes": student.get("changes") or [],
-            "report_significance": student.get("report_significance") or {},
+            "profile_changes": report_profile_history(student.get("changes") or []),
+            "report_significance": report_significance_without_buffer(student.get("report_significance")),
         })
 
     subjects = _unique_strings(
@@ -244,7 +286,7 @@ def prepare_summary(session, assignment_id):
         current = collect_pages(session, resource="grading_results", assignment_id=assignment_id, student_id=UUID(student["student_id"]), grader_type="ai")
         if current != receipt.snapshot["grades"]:
             raise ValueError("批改版本已改变，需完成对应版本的评估")
-        snapshots.append(deepcopy(receipt.snapshot))
+        snapshots.append(report_student_snapshot(receipt.snapshot))
     items = read_minerva(session, resource="assignment_items", assignment_id=assignment_id)["records"]
     statistics = build_statistics(snapshots, items)
     snapshot = _json_value({
@@ -298,17 +340,15 @@ def save_narrative(session, report, narrative):
         grades = {g["id"] for s in scope for g in s["grades"]}
         allowed_stats = {ref for ref in stat_refs if not ref.startswith("students.") or any(ref.startswith(f"students.{s['student_id']}.") for s in scope)}
         snapshots = {s["profile_snapshot_id"] for s in scope}
-        buffer_ids = {item.get("candidate_id") for s in scope for item in (s.get("evidence_buffer") or []) if isinstance(item, dict) and item.get("candidate_id")}
         profile_paths = {(h["id"], c["path"]) for s in scope for h in s["changes"] for c in (h.get("after") or {}).get("changes", []) if str(c.get("path") or "").startswith("/description/")}
-        buffer_paths = {(h["id"], c["path"]) for s in scope for h in s["changes"] for c in (h.get("after") or {}).get("changes", []) if str(c.get("path") or "").startswith("/evidence_buffer/")}
         used = 0
-        for field, allowed in (("stat_refs", allowed_stats), ("grading_result_refs", grades), ("profile_snapshot_refs", snapshots), ("question_ids", questions), ("buffer_candidate_ids", buffer_ids)):
+        for field, allowed in (("stat_refs", allowed_stats), ("grading_result_refs", grades), ("profile_snapshot_refs", snapshots), ("question_ids", questions)):
             refs = item.get(field, [])
             if not isinstance(refs, list) or any(not isinstance(ref, str) or ref not in allowed for ref in refs):
                 raise ValueError(f"{field} 包含无效引用")
             if field != "question_ids" or question_evidence:
                 used += len(refs)
-        for field, allowed_paths, label in (("profile_change_refs", profile_paths, "学生变更引用无效"), ("buffer_change_refs", buffer_paths, "缓冲层变更引用无效")):
+        for field, allowed_paths, label in (("profile_change_refs", profile_paths, "学生变更引用无效"),):
             change_refs = item.get(field, [])
             if not isinstance(change_refs, list):
                 raise ValueError(f"{field} 必须是数组")
@@ -337,20 +377,21 @@ def save_narrative(session, report, narrative):
             raise ValueError("重点问题必须引用题目、统计和批改结果")
         if any(grade_questions[ref] not in item["question_ids"] for ref in item["grading_result_refs"]):
             raise ValueError("重点问题的批改结果必须属于所引用题目")
+    assert_student_highlight_policy(list(students.values()), narrative["student_highlights"])
     for item in narrative["student_highlights"]:
-        if not isinstance(item, dict) or item.get("student_id") not in students:
-            raise ValueError("学生不在本报告范围")
-        check(item, [students[item["student_id"]]], {"progress", "unusual_performance", "mixed_performance", "observation", "current_submission_anomaly"})
-        if item["type"] == "progress" and not (item.get("profile_change_refs") or item.get("profile_snapshot_refs")):
-            raise ValueError("进步判断需要前后比较依据")
-        if item["type"] == "current_submission_anomaly" and not (item.get("grading_result_refs") and item.get("stat_refs")):
-            raise ValueError("本次作业异常必须同时引用成绩统计和批改结果")
+        check(item, [students[item["student_id"]]], {"severe_anomaly"})
+        student_stat_prefix = f"students.{item['student_id']}."
+        if not (
+            item.get("question_ids")
+            and item.get("grading_result_refs")
+            and any(ref.startswith(student_stat_prefix) for ref in item.get("stat_refs", []))
+        ):
+            raise ValueError("严重异常必须同时引用该生统计、相关题目和批改结果")
         if item.get("grading_result_refs") and (
             not item.get("question_ids")
             or any(grade_questions[ref] not in item["question_ids"] for ref in item["grading_result_refs"])
         ):
             raise ValueError("学生重点的批改结果必须对应所引用题目")
-    assert_student_highlight_coverage(list(students.values()), narrative["student_highlights"])
     report.narrative = narrative
     report.status = "completed"
     report.last_error = None

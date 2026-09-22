@@ -311,7 +311,7 @@ export function SettingsPanel({
           {sectionHost("tools", hasChat
             ? <ToolDefinitionsPanel loading={systemInfoLoading} tools={systemTools} translate={t} />
             : <div className="settings-inspect-empty">{t("settings.sessionRequired")}</div>)}
-          {sectionHost("models", <ModelsConfig embedded onClose={onClose} />)}
+          {sectionHost("models", <ModelsConfig embedded cwd={cwd} onClose={onClose} />)}
           {cwd && sectionHost("skills", <SkillsConfig embedded key={cwd} cwd={cwd} onClose={onClose} />)}
           {cwd && sectionHost("plugins", <PluginsConfig embedded key={cwd} cwd={cwd} sessionId={sessionId} onClose={onClose} onReloaded={onSessionReloaded} />)}
         </main>

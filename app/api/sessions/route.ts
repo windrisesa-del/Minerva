@@ -27,13 +27,17 @@ export async function GET(req: Request) {
       readAssignmentWorkbenches().catch(() => []),
       readSessionArchiveIndex(),
     ]);
-    const internalSessionIds = new Set(workbenches.flatMap((workbench) => [
-      ...workbench.sessions.map((session) => session.sessionId),
-      ...(workbench.currentSession ? [workbench.currentSession.sessionId] : []),
-    ]));
-    const mergedSessions = mergeSessionLists(persistedSessions, runtimeSessions).map((session) => (
-      internalSessionIds.has(session.id) ? { ...session, minervaInternal: true } : session
-    ));
+    const internalSessionAssignments = new Map<string, string>();
+    for (const workbench of workbenches) {
+      for (const session of workbench.sessions) internalSessionAssignments.set(session.sessionId, workbench.assignmentId);
+      if (workbench.currentSession) internalSessionAssignments.set(workbench.currentSession.sessionId, workbench.assignmentId);
+    }
+    const mergedSessions = mergeSessionLists(persistedSessions, runtimeSessions).map((session) => {
+      const assignmentId = session.minervaAssignmentId ?? internalSessionAssignments.get(session.id);
+      return session.minervaInternal || assignmentId
+        ? { ...session, minervaInternal: true, ...(assignmentId ? { minervaAssignmentId: assignmentId } : {}) }
+        : session;
+    });
     const archivedIds = new Set(Object.keys(archiveIndex.sessions));
     const sessions = mergedSessions.filter((session) => !archivedIds.has(session.id));
     const archivedSessions = mergedSessions

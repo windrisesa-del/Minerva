@@ -13,7 +13,8 @@ const EMPTY_INDEX: SessionArchiveIndex = { version: 1, sessions: {} };
 let mutationQueue = Promise.resolve();
 
 export function sessionArchivePath(): string {
-  return join(homedir(), ".pi", "agent", "session-archive.json");
+  const agentDir = process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent");
+  return join(agentDir, "session-archive.json");
 }
 
 export async function readSessionArchiveIndex(filePath = sessionArchivePath()): Promise<SessionArchiveIndex> {

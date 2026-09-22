@@ -7,6 +7,7 @@ import { resolveMinervaProjectRoot } from "./minerva-adapter-start";
 import { getRunningRpcSessionIds } from "./rpc-manager";
 
 const INTERRUPTED_GRACE_MS = 30_000;
+const RECONNECT_RETRY_MS = 2 * 60_000;
 const DEFAULT_DATA_API = "http://127.0.0.1:8000";
 
 function dataApiUrl() {
@@ -38,8 +39,8 @@ function runAgeMs(run: { updatedAt?: string; startedAt: string }): number {
 export function shouldResume(run: { status?: string; sessionId: string; startedAt: string; updatedAt?: string; hostPid?: number }, live: boolean, active: boolean): boolean {
   if (active) return false;
   if (run.status === "completed" || run.status === "failed" || run.status === "archived") return false;
-  const newProcess = run.hostPid !== process.pid;
-  if (run.status === "waiting_for_reconnect") return newProcess;
+  const outsideReconnectBackoff = runAgeMs(run) > RECONNECT_RETRY_MS;
+  if (run.status === "waiting_for_reconnect") return !live && outsideReconnectBackoff;
   const withinGrace = run.status === "running" && runAgeMs(run) <= INTERRUPTED_GRACE_MS;
   return run.status === "running" && !live && !withinGrace;
 }
@@ -50,7 +51,11 @@ export function archivedRunRecord<T extends {
   failedAt?: string;
   cleanupPending?: boolean;
 }>(run: T): Omit<T, "status" | "error" | "failedAt" | "cleanupPending"> & { status: "archived" } {
-  const { status: _status, error: _error, failedAt: _failedAt, cleanupPending: _cleanupPending, ...rest } = run;
+  const rest = { ...run } as T & Record<string, unknown>;
+  delete rest.status;
+  delete rest.error;
+  delete rest.failedAt;
+  delete rest.cleanupPending;
   return { ...rest, status: "archived" };
 }
 
