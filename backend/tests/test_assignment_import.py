@@ -28,6 +28,8 @@ def test_student_key_from_filename() -> None:
     assert is_spec_file("作业/题目.pdf")
     assert is_spec_file("A组_作业包/题目.pdf")
     assert is_spec_file("A组_作业包/标准答案.pdf")
+    assert is_spec_file("A组_作业包(优化)/题目.pdf")
+    assert is_spec_file("A组_作业包（第二版）/参考答案.pdf")
     assert not is_spec_file("1.jpg")
     assert not is_spec_file("1/题目.pdf")
 

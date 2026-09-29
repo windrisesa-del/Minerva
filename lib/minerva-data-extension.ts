@@ -109,12 +109,44 @@ export function coerceEvaluatorWrite(payload: Record<string, unknown>): Record<s
   return payload;
 }
 
-function errorResult(message: string) {
-  return {
-    content: [{ type: "text" as const, text: message }],
-    details: undefined,
-    isError: true,
+function errorResult(message: string): never {
+  // Pi marks normal returns successful. Throw to persist a real tool error.
+  throw new Error(message);
+}
+
+function isAssessment(value: unknown): boolean {
+  const record = asRecord(value);
+  return record?.schema_version === "minerva-assessment/0.1" || Array.isArray(record?.student_submissions);
+}
+
+export function markerAssessmentView(value: unknown, record: unknown): unknown {
+  const assessment = asRecord(value);
+  const snapshot = asRecord(asRecord(record)?.question_snapshot);
+  if (!assessment || !snapshot || snapshot.source !== "adapter" || !snapshot.question_id) {
+    throw new Error("无法将完整 Assessment 安全定位到当前题目，禁止向 Marker 展开整份答卷");
+  }
+  const question = Array.isArray(assessment.questions)
+    ? assessment.questions.find((item) => asRecord(item)?.question_id === snapshot.question_id)
+    : null;
+  if (!question) throw new Error("Assessment 缺少当前题目，不能继续批改");
+  // Persisted snapshots contain the question/rubric, but not resolved assets.
+  // Never expose student_submissions or unrelated questions and images.
+  const assets = asRecord(assessment.assets) ?? {};
+  const selected: Record<string, unknown> = Object.create(null);
+  const visit = (node: unknown) => {
+    if (Array.isArray(node)) { node.forEach(visit); return; }
+    const block = asRecord(node);
+    if (!block) return;
+    if (block.type === "image" && typeof block.asset_id === "string") {
+      if (!Object.hasOwn(assets, block.asset_id) || !asRecord(assets[block.asset_id])) throw new Error(`题目图片资产缺失：${block.asset_id}`);
+      selected[block.asset_id] = assets[block.asset_id];
+    }
+    Object.values(block).forEach(visit);
   };
+  visit(question);
+  // Global assessment warnings concern the common grading material and must
+  // not disappear when the redundant document body is removed.
+  return { assets: selected, uncertainties: assessment.uncertainties ?? [] };
 }
 
 function collectAttachments(value: unknown, bucket: Attachment[]) {
@@ -179,6 +211,7 @@ async function loadRecordAttachments(
     jsonOnly?: boolean;
     allAssignmentFiles?: boolean;
     assignmentId?: string;
+    markerMode?: boolean;
     attachmentOffset?: number;
     attachmentLimit?: number;
   },
@@ -220,15 +253,27 @@ async function loadRecordAttachments(
       try {
         const parsed = JSON.parse(text);
         jsonByKey.set(storageKey, parsed);
-        collectAttachments(parsed, attachments);
+        if (!options?.markerMode || !isAssessment(parsed)) collectAttachments(parsed, attachments);
       } catch {
-        jsonByKey.set(storageKey, text);
+        if (options?.markerMode) failedAttachments.push(storageKey);
+        else jsonByKey.set(storageKey, text);
       }
     } catch {
       failedAttachments.push(storageKey);
     }
   }
-  if (jsonByKey.size > 0) injectJsonContent(records, jsonByKey);
+  if (jsonByKey.size > 0) {
+    for (const record of records) {
+      const scoped = new Map(jsonByKey);
+      if (options?.markerMode) {
+        for (const [key, value] of scoped) {
+          if (isAssessment(value)) scoped.set(key, markerAssessmentView(value, record));
+        }
+      }
+      injectJsonContent(record, scoped);
+      collectAttachments(record, attachments);
+    }
+  }
 
   const uniqueImageKeys = new Set<string>();
   const imageAttachments = attachments.filter((attachment) => {
@@ -242,29 +287,31 @@ async function loadRecordAttachments(
   const configuredLimit = Math.max(1, Math.floor(options?.attachmentLimit ?? MAX_ATTACHMENT_IMAGES));
   const limit = options?.allAssignmentFiles ? Math.min(configuredLimit, 4) : Math.min(configuredLimit, MAX_ATTACHMENT_IMAGES);
   const selected = imageAttachments.slice(offset, offset + limit);
-  const images: Array<{ type: "image"; data: string; mimeType: string }> = [];
-  for (const attachment of selected) {
+  // The existing page cap bounds IO concurrency; Promise.all retains source order.
+  const loadedImages = await Promise.all(selected.map(async (attachment) => {
     const storageKey = String(attachment.storage_key);
     try {
       const response = await fetch(`${dataApiUrl()}${storageKey}`, { cache: "no-store" });
       if (!response.ok) {
         failedAttachments.push(storageKey);
-        continue;
+        return null;
       }
       const bytes = Buffer.from(await response.arrayBuffer());
       if (bytes.length === 0 || (!options?.allAssignmentFiles && bytes.length > MAX_ATTACHMENT_BYTES)) {
         failedAttachments.push(storageKey);
-        continue;
+        return null;
       }
-      images.push({
-        type: "image",
+      return {
+        type: "image" as const,
         data: bytes.toString("base64"),
         mimeType: typeof attachment.mime_type === "string" ? attachment.mime_type : "image/png",
-      });
+      };
     } catch {
       failedAttachments.push(storageKey);
+      return null;
     }
-  }
+  }));
+  const images = loadedImages.filter((image) => image !== null);
   return {
     images,
     totalImages: imageAttachments.length,
@@ -318,7 +365,7 @@ export function createMinervaDataExtension(options?: {
         promptGuidelines: graderMode
           ? [
               "Read only the assignment_id bound to this Marker session.",
-              "Read the question list first, then pass question_id when reading each question and its answer_attempts.",
+              "Read questions once for the list and scoring basis; do not also read assignment_items for the same information. Then pass question_id for each answer_attempts read and for question images.",
               "Each question may include JSON and image evidence; PDF files are not opened. Continue attachment_offset only when that question has more images.",
               "Read the scoring basis before student submissions, and do not read student profiles or observation data.",
             ]
@@ -427,7 +474,7 @@ export function createMinervaDataExtension(options?: {
               cache: "no-store",
               headers: { Accept: "application/json" },
             });
-            const payload = await response.json().catch(() => ({ detail: "数据服务返回了无效响应" }));
+            const payload = await response.json();
             if (!response.ok) {
               return readError(typeof payload.detail === "string" ? payload.detail : `读取失败 HTTP ${response.status}`);
             }
@@ -436,6 +483,7 @@ export function createMinervaDataExtension(options?: {
               jsonOnly,
               allAssignmentFiles: graderMode && Boolean(params.question_id),
               assignmentId: graderMode ? graderAssignmentId : undefined,
+              markerMode: graderMode,
               attachmentOffset: params.attachment_offset,
               attachmentLimit: params.attachment_limit,
             });
@@ -507,8 +555,10 @@ export function createMinervaDataExtension(options?: {
               ? Type.Literal("student_observation")
               : Type.String({ description: "grading | student_description | evidence_buffer" }),
           assignment_id: Type.String({ description: "Assignment UUID" }),
-          student_id: Type.Optional(Type.String({ description: "Required when saving per-student grading, description, or buffer items" })),
-          authored_by: evaluatorMode ? Type.Optional(Type.Literal("agent")) : Type.Optional(Type.String({ description: "agent or teacher. Used for student_description." })),
+          student_id: graderMode && graderStudentId
+            ? Type.Literal(graderStudentId, { description: "This worker's bound student; required on every grading write." })
+            : Type.Optional(Type.String({ description: "Required when saving per-student grading, description, or buffer items" })),
+          ...(!graderMode ? { authored_by: evaluatorMode ? Type.Optional(Type.Literal("agent")) : Type.Optional(Type.String({ description: "agent or teacher. Used for student_description." })) } : {}),
           ...(evaluatorMode ? {
             evaluation_complete: Type.Optional(Type.Boolean({ description: "Set true on the final write, including when operations is empty. Freezes the profile, evidence buffer, and report_significance for reporting." })),
             report_significance: Type.Optional(Type.Object({
@@ -539,7 +589,7 @@ export function createMinervaDataExtension(options?: {
                   grading_result_id: Type.String({ description: "A real AI grading result from the current assignment and student." }),
                 }, { additionalProperties: false }), { minItems: 1 }),
               }, { additionalProperties: false }))),
-          } : {
+          } : graderMode ? {} : {
             fields: Type.Optional(Type.Any({ description: "Partial student_description fields to merge" })),
             profile_fields: Type.Optional(Type.Any()),
             change_notes: Type.Optional(Type.Array(Type.Any())),
@@ -580,7 +630,7 @@ export function createMinervaDataExtension(options?: {
             knowledge_results: Type.Optional(Type.Array(Type.Any())),
             rubric_items: Type.Optional(Type.Array(Type.Any())),
           }))),
-        }),
+        }, { additionalProperties: false }),
         async execute(_toolCallId, params) {
           if (graderMode && graderReadFailed) {
             return errorResult("本次 Marker 会话此前读取数据或附件失败，禁止写入成绩；请等待主机自动重试");
@@ -633,12 +683,20 @@ export function createMinervaDataExtension(options?: {
                     })
                   : params),
             });
-            const payload = await response.json().catch(() => ({ detail: "数据服务返回了无效响应" }));
+            const payload = await response.json();
             if (!response.ok) {
               return errorResult(typeof payload.detail === "string" ? payload.detail : `写入失败 HTTP ${response.status}`);
             }
+            const receipt = evaluatorMode ? {
+              kind: payload.kind,
+              assignment_id: payload.assignment_id,
+              student_id: payload.student_id,
+              evaluation_complete: (params as { evaluation_complete?: boolean }).evaluation_complete === true,
+              updated_fields: payload.updated_fields,
+              changed_paths: Array.isArray(payload.changes) ? payload.changes.map((change: { path?: string }) => change.path) : [],
+            } : payload;
             return {
-              content: [{ type: "text" as const, text: JSON.stringify(payload) }],
+              content: [{ type: "text" as const, text: JSON.stringify(receipt) }],
               details: payload,
             };
           } catch (error) {

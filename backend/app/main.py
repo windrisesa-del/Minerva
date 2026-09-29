@@ -582,9 +582,9 @@ def minerva_read(
 
 
 @app.get("/api/assignments/{assignment_id}/processing")
-def assignment_processing(assignment_id: UUID, session: Session = Depends(get_session)):
+def assignment_processing(assignment_id: UUID, session: Session = Depends(get_session), student_id: UUID | None = None):
     try:
-        return assignment_processing_state(session, assignment_id)
+        return assignment_processing_state(session, assignment_id, student_id=student_id)
     except ValueError as error:
         status = 404 if str(error) == "作业不存在" else 400
         raise HTTPException(status_code=status, detail=str(error)) from error

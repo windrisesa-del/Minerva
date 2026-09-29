@@ -897,30 +897,33 @@
 
 .settings-general {
   width: 100%;
-  max-width: 680px;
-  padding: 26px clamp(18px, 4vw, 40px) 40px;
+  height: 100%;
+  min-width: 0;
+  padding: 30px clamp(24px, 4vw, 40px) 40px;
   overflow-y: auto;
 }
 
 .settings-archives {
   width: 100%;
-  max-width: 760px;
-  padding: 26px clamp(18px, 4vw, 40px) 40px;
+  height: 100%;
+  min-width: 0;
+  padding: 30px clamp(24px, 4vw, 40px) 40px;
   overflow-y: auto;
 }
 
 .settings-archives > h2 { margin: 0; color: var(--text); font-size: 18px; }
 .settings-archives-description { margin: 8px 0 0; color: var(--text-dim); font-size: 11px; line-height: 1.5; }
-.settings-archive-group { margin-top: 28px; }
-.settings-archive-group > header { display: flex; align-items: center; gap: 8px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+.settings-archive-group { margin-top: 32px; }
+.settings-archive-group + .settings-archive-group { padding-top: 28px; border-top: 1px solid color-mix(in srgb, var(--border) 75%, transparent); }
+.settings-archive-group > header { display: flex; align-items: center; gap: 8px; padding-bottom: 10px; border-bottom: 1px solid color-mix(in srgb, var(--border) 65%, transparent); }
 .settings-archive-group > header h3 { flex: 1; margin: 0; color: var(--text); font-size: 13px; }
 .settings-archive-group > header span { color: var(--text-dim); font-family: var(--font-mono); font-size: 10px; }
 .settings-archive-list { display: flex; flex-direction: column; }
 .settings-archive-row { display: flex; align-items: center; gap: 16px; min-height: 58px; padding: 9px 2px; border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent); }
-.settings-archive-row > div { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 4px; }
+.settings-archive-row > div:first-child { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 4px; }
 .settings-archive-row strong { overflow: hidden; color: var(--text); font-size: 12px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .settings-archive-row small { overflow: hidden; color: var(--text-dim); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
-.settings-archive-actions { display: flex; flex-shrink: 0; align-items: center; gap: 8px; }
+.settings-archive-actions { display: flex; flex: 0 0 auto; align-items: center; justify-content: flex-end; gap: 8px; margin-left: auto; }
 .settings-archive-actions > button { height: 30px; padding: 0 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text-muted); cursor: pointer; font-size: 11px; }
 .settings-archive-actions > button:hover { border-color: color-mix(in srgb, var(--accent) 35%, var(--border)); background: var(--bg-hover); color: var(--accent); }
 .settings-archive-actions > button.settings-archive-delete:hover { border-color: color-mix(in srgb, #c45c4a 45%, var(--border)); background: color-mix(in srgb, #c45c4a 10%, var(--bg)); color: #c45c4a; }
@@ -928,6 +931,13 @@
 .settings-archive-expand { align-self: center; margin: 12px 0 2px; padding: 6px 12px; border: 0; border-radius: 6px; background: transparent; color: var(--accent); cursor: pointer; font-size: 11px; }
 .settings-archive-expand:hover { background: var(--bg-hover); }
 .settings-archives-empty { margin: 16px 2px 0; color: var(--text-dim); font-size: 11px; }
+
+@media (max-width: 640px) {
+  .settings-archives { padding: 24px; }
+  .settings-archive-row { align-items: flex-start; flex-direction: column; gap: 10px; padding: 12px 2px; }
+  .settings-archive-row > div:first-child { width: 100%; }
+  .settings-archive-actions { align-self: flex-end; }
+}
 
 .settings-confirm-backdrop {
   position: fixed;
@@ -1022,11 +1032,31 @@
 }
 
 .settings-general-section {
-  margin-top: 30px;
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+  align-items: start;
+  column-gap: clamp(24px, 4vw, 48px);
+  margin-top: 36px;
 }
 
 .settings-general-section:first-of-type {
-  margin-top: 24px;
+  margin-top: 28px;
+}
+
+.settings-general-section + .settings-general-section {
+  padding-top: 28px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 75%, transparent);
+}
+
+.settings-general-copy,
+.settings-general-control {
+  min-width: 0;
+}
+
+.settings-general-control {
+  width: 100%;
+  max-width: 500px;
+  justify-self: end;
 }
 
 .settings-general-heading {
@@ -1037,7 +1067,7 @@
 }
 
 .settings-general-description {
-  margin: 0 0 12px;
+  margin: 0;
   color: var(--text-dim);
   font-size: 11px;
   line-height: 1.5;
@@ -1048,9 +1078,8 @@
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 3px;
   width: 100%;
-  max-width: 420px;
   padding: 3px;
-  border-radius: 7px;
+  border-radius: 9px;
   background: var(--bg-panel);
 }
 
@@ -1075,12 +1104,17 @@
   background: var(--bg-selected);
   color: var(--accent);
   font-weight: 600;
+  box-shadow: none;
 }
 
-.settings-theme-option:not([aria-checked="true"]):hover,
-.settings-theme-option:focus-visible {
+.settings-theme-option:not([aria-checked="true"]):hover {
   background: var(--bg-hover);
-  outline: none;
+}
+
+.settings-theme-option:focus-visible,
+.settings-language-option:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 
 .settings-theme-option-label {
@@ -1095,7 +1129,6 @@
   flex-direction: column;
   gap: 3px;
   width: 100%;
-  max-width: 420px;
 }
 
 .settings-language-option {
@@ -1115,12 +1148,11 @@
 
 .settings-language-option[aria-checked="true"] {
   background: var(--bg-selected);
+  box-shadow: none;
 }
 
-.settings-language-option:not([aria-checked="true"]):hover,
-.settings-language-option:focus-visible {
+.settings-language-option:not([aria-checked="true"]):hover {
   background: var(--bg-hover);
-  outline: none;
 }
 
 .settings-language-radio {
@@ -1160,19 +1192,41 @@
   justify-content: space-between;
   gap: 16px;
   width: 100%;
-  max-width: 420px;
   min-height: 44px;
   padding: 0 10px;
-  border-radius: 5px;
-  background: var(--bg-panel);
   color: var(--text);
   font-size: 12px;
+}
+
+.settings-general .settings-shell-option .config-switch:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
 }
 
 .settings-general-error {
   margin: 8px 0 0;
   color: #ef4444;
   font-size: 11px;
+}
+
+@media (max-width: 720px) {
+  .settings-general {
+    padding: 24px;
+  }
+
+  .settings-general-section {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: 14px;
+    margin-top: 32px;
+  }
+
+  .settings-general-section:first-of-type {
+    margin-top: 24px;
+  }
+
+  .settings-general-control {
+    max-width: none;
+  }
 }
 
 @media (max-width: 640px) {
@@ -1295,9 +1349,7 @@
 }
 
 .config-sidebar-item[aria-current="page"],
-.settings-section-tab[aria-selected="true"],
-.settings-theme-option[aria-checked="true"],
-.settings-language-option[aria-checked="true"] {
+.settings-section-tab[aria-selected="true"] {
   background: var(--bg-selected);
   box-shadow: inset 3px 0 0 var(--accent);
 }
@@ -1337,8 +1389,7 @@
   border-radius: 50%;
 }
 
-.agents-feature-setting,
-.settings-general-section {
+.agents-feature-setting {
   background: color-mix(in srgb, var(--bg-panel) 54%, var(--surface-elevated));
 }
 

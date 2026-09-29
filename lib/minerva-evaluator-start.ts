@@ -5,6 +5,7 @@ import { readEvaluatorRuns, upsertEvaluatorRun } from "./evaluator-run-store";
 import { buildEvaluatorUserPrompt, type EvaluatorInputContext } from "./minerva-evaluator";
 import { readProcessingState } from "./minerva-processing";
 import { runStudentWaves, waitForStudentWorker } from "./minerva-student-pool";
+import { isModelConnectionFailure, nextModelFailure, type ModelWorkerEvent } from "./minerva-worker-errors";
 import { invalidateSessionListCache } from "./session-reader";
 import { registerWorkbenchSession, updateWorkbenchSession } from "./assignment-workbench-store";
 
@@ -21,9 +22,7 @@ type EvaluatorWorker = {
   sessionId: string;
   session: {
     isRunning(): boolean;
-    onEvent(listener: (event: {
-      type?: string;
-      errorMessage?: string;
+    onEvent(listener: (event: ModelWorkerEvent & {
       toolName?: string;
       result?: unknown;
       isError?: boolean;
@@ -152,9 +151,8 @@ export function evaluatorWriteFailure(result: unknown, isError = false): string 
   const text = resultText(result).trim();
   if (!text) return isError ? "write_minerva 返回了未知错误" : null;
   if (isError) return text;
-  // Inline extension errors are currently persisted by Pi as tool results with
-  // isError=false. Successful Minerva writes always return a JSON payload;
-  // plain text therefore represents a rejected write and must trigger a retry.
+  // Retain compatibility with older sessions whose extension errors were
+  // returned normally and persisted as isError=false. New tools throw errors.
   try {
     JSON.parse(text);
     return null;
@@ -333,11 +331,7 @@ async function startStudentEvaluator(options: {
   let lastActivity = Date.now();
   const unsubscribe = session.onEvent((event) => {
     lastActivity = Date.now();
-    if (event.type === "prompt_error") {
-      failure = typeof event.errorMessage === "string" && event.errorMessage
-        ? event.errorMessage
-        : "Evaluator 的 LLM 连接中断";
-    }
+    failure = nextModelFailure(failure, event);
     if (event.type === "tool_execution_end" && event.toolName === "write_minerva") {
       toolFailure = evaluatorWriteFailure(event.result, event.isError === true);
     }
@@ -415,7 +409,7 @@ async function runStudentEvaluators(options: {
       groupPrefix: "evaluator",
       concurrency: 2,
       retries: 3,
-      shouldRetry: (error) => evaluatorFailureIsRetryable(error),
+      shouldRetry: (error) => !isModelConnectionFailure(error) && evaluatorFailureIsRetryable(error),
       worker: async ({ item, groupId, agentIndex, attempt }) => withEvaluatorStudentLock(item.student_id, async () => {
         if (await hasCurrentEvaluationReceipt(options.assignmentId, item)) {
           completedStudents += 1;
@@ -435,7 +429,7 @@ async function runStudentEvaluators(options: {
           context,
         });
         try {
-          await waitForStudentWorker(worker, "Evaluator 单个学生处理");
+          await waitForStudentWorker(worker, "Evaluator 单个学生处理", () => hasCurrentEvaluationReceipt(options.assignmentId, item));
           const toolFailure = worker.readToolFailure();
           if (toolFailure) throw evaluatorToolFailure(toolFailure);
           if (!await hasCurrentEvaluationReceipt(options.assignmentId, item)) {

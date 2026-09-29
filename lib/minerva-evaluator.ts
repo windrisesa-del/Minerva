@@ -1,3 +1,5 @@
+import { compactEvidenceContext } from "./minerva-model-context";
+
 export const EVALUATOR_PROMPT_MARKER = "[OBSERVE_STUDENT]";
 export const EVALUATOR_SESSION_TYPE = "pi-web:minerva-evaluator";
 export const MINERVA_EVALUATOR_TOOLS = ["write_minerva"] as const;
@@ -220,9 +222,9 @@ submission_id: ${options.submissionId}
 title: ${options.title}
 
 evaluator_context:
-${JSON.stringify(options.context)}
+${JSON.stringify(compactEvidenceContext(options.context))}
 
-只评估这个学生的这一次提交。输入已经完整且固定，不需要调用读取工具。最终必须用 operations 增量写入，并以 evaluation_complete=true 完成 student_observation；同时提供 report_significance，无变化时 operations=[]。`;
+只评估这个学生的这一次提交。输入已经完整且固定，不需要调用读取工具。evidence_sources（如有）是按 grading_result_id 去重的完整来源字典，可据此比较不同作业的证据。写入 evidence_refs 和 buffer evidence 的 source 时仅传 grading_result_id，其余来源 ID 由主机校验补全；不要复制 evidence_sources 字典。保留历史证据，但不要仅为改写措辞重写未变化的节点。最终必须用 operations 增量写入，并以 evaluation_complete=true 完成 student_observation；同时提供 report_significance，无变化时 operations=[]。`;
 }
 
 export function readEvaluatorSessionData(

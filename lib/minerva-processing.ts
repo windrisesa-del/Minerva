@@ -21,8 +21,9 @@ export type ProcessingState = {
   students: ProcessingStudent[];
 };
 
-export async function readProcessingState(assignmentId: string): Promise<ProcessingState> {
-  const response = await fetch(`${dataApiUrl()}/api/assignments/${encodeURIComponent(assignmentId)}/processing`, {
+export async function readProcessingState(assignmentId: string, studentId?: string): Promise<ProcessingState> {
+  const query = studentId ? `?${new URLSearchParams({ student_id: studentId })}` : "";
+  const response = await fetch(`${dataApiUrl()}/api/assignments/${encodeURIComponent(assignmentId)}/processing${query}`, {
     cache: "no-store",
     headers: { Accept: "application/json" },
   });

@@ -3,6 +3,7 @@ import { invalidateSessionListCache } from "./session-reader";
 import { registerWorkbenchSession, updateWorkbenchSession } from "./assignment-workbench-store";
 import { finalizeAssignmentSession } from "./assignment-session-finalizer";
 import { buildSummarizerPrompt } from "./minerva-summarizer";
+import { nextModelFailure } from "./minerva-worker-errors";
 
 const active = new Set<string>();
 const baseUrl = () => (process.env.MINERVA_DATA_API_URL || "http://127.0.0.1:8000").replace(/\/$/, "");
@@ -44,7 +45,7 @@ export async function startSummarizer(options: { cwd: string; assignmentId: stri
       }).catch((error) => console.error("[minerva] failed to register Summarizer workbench session:", error));
       invalidateSessionListCache();
       let failure: string | null = null;
-      const unsubscribe = session.onEvent(event => { if (event.type === "prompt_error") failure = typeof event.errorMessage === "string" ? event.errorMessage : "模型连接失败"; });
+      const unsubscribe = session.onEvent(event => { failure = nextModelFailure(failure, event); });
       try {
         await session.send({ type: "prompt", message: buildSummarizerPrompt(report.report_context) });
         const deadline = Date.now() + 10 * 60 * 1000;

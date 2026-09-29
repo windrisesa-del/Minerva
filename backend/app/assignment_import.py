@@ -114,6 +114,10 @@ def _is_generic_folder(name: str) -> bool:
     if normalized in {item.casefold() for item in GENERIC_FOLDER_NAMES}:
         return True
     compact = re.sub(r"[\s_-]+", "", normalized)
+    # Package revisions often carry a trailing note, such as
+    # ``A组_作业包(优化)`` or ``作业包（第二版）``. The note still describes the
+    # package folder, not a student folder, so ignore it for classification.
+    compact = re.sub(r"(?:\([^()]*\)|（[^（）]*）)+$", "", compact)
     return compact.endswith(("作业包", "assignmentpackage", "homeworkpackage"))
 
 

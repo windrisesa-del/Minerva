@@ -120,68 +120,80 @@ function GeneralSettings({ sessionId, onSessionReloaded }: Pick<Props, "sessionI
       <h2 className="settings-general-title">{t("settings.general")}</h2>
 
       <section className="settings-general-section">
-        <h3 className="settings-general-heading">{t("settings.appearance")}</h3>
-        <p className="settings-general-description">{t("settings.appearanceDescription")}</p>
-        <div role="radiogroup" aria-label={t("settings.appearance")} className="settings-theme-options">
-          {themeOptions.map((option) => {
-            const selected = preference === option.id;
-            return (
-              <button
-                key={option.id}
-                type="button"
-                role="radio"
-                aria-checked={selected}
-                onClick={() => setThemePreference(option.id)}
-                className="settings-theme-option"
-              >
-                <ThemeIcon preference={option.id} />
-                <span className="settings-theme-option-label">{option.label}</span>
-              </button>
-            );
-          })}
+        <div className="settings-general-copy">
+          <h3 className="settings-general-heading">{t("settings.appearance")}</h3>
+          <p className="settings-general-description">{t("settings.appearanceDescription")}</p>
+        </div>
+        <div className="settings-general-control">
+          <div role="radiogroup" aria-label={t("settings.appearance")} className="settings-theme-options">
+            {themeOptions.map((option) => {
+              const selected = preference === option.id;
+              return (
+                <button
+                  key={option.id}
+                  type="button"
+                  role="radio"
+                  aria-checked={selected}
+                  onClick={() => setThemePreference(option.id)}
+                  className="settings-theme-option"
+                >
+                  <ThemeIcon preference={option.id} />
+                  <span className="settings-theme-option-label">{option.label}</span>
+                </button>
+              );
+            })}
+          </div>
         </div>
       </section>
 
       {shellSettings?.isWindows && (
         <section className="settings-general-section">
-          <h3 className="settings-general-heading">{t("settings.shellTool")}</h3>
-          <p className="settings-general-description">{t("settings.shellToolDescription")}</p>
-          <div className="settings-shell-option">
-            <span>{t("settings.usePowerShell")}</span>
-            <ConfigSwitch
-              checked={shellSettings.powerShellEnabled}
-              loading={shellSaving}
-              label={t("settings.usePowerShell")}
-              onChange={(enabled) => void togglePowerShell(enabled)}
-            />
+          <div className="settings-general-copy">
+            <h3 className="settings-general-heading">{t("settings.shellTool")}</h3>
+            <p className="settings-general-description">{t("settings.shellToolDescription")}</p>
           </div>
-          {shellError && <p role="alert" className="settings-general-error">{shellError}</p>}
+          <div className="settings-general-control">
+            <div className="settings-shell-option">
+              <span>{t("settings.usePowerShell")}</span>
+              <ConfigSwitch
+                checked={shellSettings.powerShellEnabled}
+                loading={shellSaving}
+                label={t("settings.usePowerShell")}
+                onChange={(enabled) => void togglePowerShell(enabled)}
+              />
+            </div>
+            {shellError && <p role="alert" className="settings-general-error">{shellError}</p>}
+          </div>
         </section>
       )}
 
       <section className="settings-general-section">
-        <h3 className="settings-general-heading">{t("common.language")}</h3>
-        <p className="settings-general-description">{t("settings.languageDescription")}</p>
-        <div role="radiogroup" aria-label={t("common.language")} className="settings-language-options">
-          {supportedLocales.map((plugin) => {
-            const selected = locale === plugin.id;
-            return (
-              <button
-                key={plugin.id}
-                type="button"
-                role="radio"
-                aria-checked={selected}
-                onClick={() => setLocale(plugin.id as typeof locale)}
-                className="settings-language-option"
-              >
-                <span className="settings-language-radio">
-                  {selected && <span className="settings-language-radio-dot" />}
-                </span>
-                <span className="settings-language-label">{plugin.label}</span>
-                <span className="settings-language-code">{plugin.id}</span>
-              </button>
-            );
-          })}
+        <div className="settings-general-copy">
+          <h3 className="settings-general-heading">{t("common.language")}</h3>
+          <p className="settings-general-description">{t("settings.languageDescription")}</p>
+        </div>
+        <div className="settings-general-control">
+          <div role="radiogroup" aria-label={t("common.language")} className="settings-language-options">
+            {supportedLocales.map((plugin) => {
+              const selected = locale === plugin.id;
+              return (
+                <button
+                  key={plugin.id}
+                  type="button"
+                  role="radio"
+                  aria-checked={selected}
+                  onClick={() => setLocale(plugin.id as typeof locale)}
+                  className="settings-language-option"
+                >
+                  <span className="settings-language-radio">
+                    {selected && <span className="settings-language-radio-dot" />}
+                  </span>
+                  <span className="settings-language-label">{plugin.label}</span>
+                  <span className="settings-language-code">{plugin.id}</span>
+                </button>
+              );
+            })}
+          </div>
         </div>
       </section>
     </div>

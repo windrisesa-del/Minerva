@@ -1002,20 +1002,19 @@ def _save_processing(session: Session, payload: dict[str, Any]) -> dict[str, Any
     }
 
 
-def assignment_processing_state(session: Session, assignment_id: UUID) -> dict[str, Any]:
+def assignment_processing_state(session: Session, assignment_id: UUID, *, student_id: UUID | None = None) -> dict[str, Any]:
     assignment = session.get(Assignment, assignment_id)
     if assignment is None:
         raise ValueError("作业不存在")
-    candidates = list(
-        session.scalars(
-            select(Submission)
-            .where(
-                Submission.assignment_id == assignment_id,
-                Submission.status.in_(ACTIVE_SUBMISSION_STATUSES),
-            )
-            .order_by(Submission.student_id, Submission.attempt_number.desc(), Submission.id.desc())
-        )
+    query = select(Submission).where(
+        Submission.assignment_id == assignment_id,
+        Submission.status.in_(ACTIVE_SUBMISSION_STATUSES),
     )
+    if student_id is not None:
+        query = query.where(Submission.student_id == student_id)
+    candidates = list(session.scalars(
+        query.order_by(Submission.student_id, Submission.attempt_number.desc(), Submission.id.desc())
+    ))
     latest: dict[UUID, Submission] = {}
     for submission in candidates:
         latest.setdefault(submission.student_id, submission)

@@ -10,7 +10,7 @@ export type StudentAgentWorker = {
   unsubscribe(): void;
 };
 
-export async function waitForStudentWorker(worker: StudentAgentWorker, label: string): Promise<void> {
+export async function waitForStudentWorker(worker: StudentAgentWorker, label: string, verifyCommitted?: () => Promise<boolean>): Promise<void> {
   const hardDeadline = Date.now() + WORKER_HARD_TIMEOUT_MS;
   try {
     while (worker.session.isRunning()) {
@@ -24,7 +24,9 @@ export async function waitForStudentWorker(worker: StudentAgentWorker, label: st
       await new Promise((resolveDelay) => setTimeout(resolveDelay, 250));
     }
     const failure = worker.readFailure();
-    if (failure) throw new Error(failure);
+    // A final prose response can disconnect after the atomic write succeeded.
+    // Only an authoritative, current-version database receipt can override it.
+    if (failure && !(verifyCommitted && await verifyCommitted())) throw new Error(failure);
   } finally {
     worker.unsubscribe();
   }
@@ -51,39 +53,50 @@ export async function runStudentWaves<T>(options: {
   shouldRetry?: (error: unknown, slot: StudentWaveSlot<T>) => boolean;
   retryDelayMs?: (error: unknown, slot: StudentWaveSlot<T>) => number;
 }): Promise<{ failed: T[]; failures: StudentWaveFailure<T>[] }> {
-  const concurrency = Math.max(1, options.concurrency ?? STUDENT_WORKER_CONCURRENCY);
-  const retries = Math.max(1, options.retries ?? STUDENT_WORKER_RETRIES);
+  const concurrency = Math.max(1, Math.floor(options.concurrency ?? STUDENT_WORKER_CONCURRENCY));
+  const retries = Math.max(1, Math.floor(options.retries ?? STUDENT_WORKER_RETRIES));
+  if (!Number.isFinite(concurrency) || !Number.isFinite(retries)) {
+    throw new Error("Student worker concurrency and retries must be finite numbers");
+  }
   const failed: T[] = [];
   const failures: StudentWaveFailure<T>[] = [];
-  for (let offset = 0; offset < options.items.length; offset += concurrency) {
-    const wave = options.items.slice(offset, offset + concurrency);
+  let nextIndex = 0;
+  const runItem = async (index: number) => {
+    const item = options.items[index];
+    // Retain stable display groups and retry identities, without a wave barrier.
+    const offset = Math.floor(index / concurrency) * concurrency;
     const groupId = `${options.groupPrefix}:${offset}`;
-    await Promise.all(wave.map(async (item, index) => {
-      const agentIndex = index + 1;
-      let lastError: unknown;
-      for (let attempt = 1; attempt <= retries; attempt += 1) {
-        try {
-          await options.worker({ item, groupId, agentIndex, attempt });
-          return;
-        } catch (error) {
-          lastError = error;
-          const slot = { item, groupId, agentIndex, attempt };
-          if (attempt >= retries || options.shouldRetry?.(error, slot) === false) break;
-          const retryDelayMs = Math.max(0, options.retryDelayMs?.(error, slot) ?? Math.min(10_000, 1_000 * (2 ** (attempt - 1))));
-          if (retryDelayMs > 0) {
-            await new Promise((resolveDelay) => setTimeout(resolveDelay, retryDelayMs));
-          }
+    const agentIndex = index % concurrency + 1;
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= retries; attempt += 1) {
+      try {
+        await options.worker({ item, groupId, agentIndex, attempt });
+        return;
+      } catch (error) {
+        lastError = error;
+        const slot = { item, groupId, agentIndex, attempt };
+        if (attempt >= retries || options.shouldRetry?.(error, slot) === false) break;
+        const retryDelayMs = Math.max(0, options.retryDelayMs?.(error, slot) ?? Math.min(10_000, 1_000 * (2 ** (attempt - 1))));
+        if (retryDelayMs > 0) {
+          await new Promise((resolveDelay) => setTimeout(resolveDelay, retryDelayMs));
         }
       }
-      failed.push(item);
-      failures.push({ item, error: lastError });
-      if (lastError) {
-        console.error(
-          `[minerva] student worker failed:`,
-          lastError instanceof Error ? lastError.message : lastError,
-        );
-      }
-    }));
-  }
+    }
+    failed.push(item);
+    failures.push({ item, error: lastError });
+    if (lastError) {
+      console.error(
+        `[minerva] student worker failed:`,
+        lastError instanceof Error ? lastError.message : lastError,
+      );
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(concurrency, options.items.length) }, async () => {
+    while (nextIndex < options.items.length) {
+      // Claim synchronously before awaiting; each item is scheduled exactly once.
+      const index = nextIndex++;
+      await runItem(index);
+    }
+  }));
   return { failed, failures };
 }

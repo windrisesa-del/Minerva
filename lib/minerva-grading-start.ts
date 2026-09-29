@@ -8,6 +8,7 @@ import { readProcessingState, setStudentProcessing, type ProcessingStudent } fro
 import { runStudentWaves, waitForStudentWorker } from "./minerva-student-pool";
 import { invalidateSessionListCache } from "./session-reader";
 import { registerWorkbenchSession, updateWorkbenchSession } from "./assignment-workbench-store";
+import { isModelConnectionFailure, nextModelFailure, type ModelWorkerEvent } from "./minerva-worker-errors";
 
 const DEFAULT_DATA_API = "http://127.0.0.1:8000";
 
@@ -16,7 +17,7 @@ type GraderWorker = {
   sessionId: string;
   session: {
     isRunning(): boolean;
-    onEvent(listener: (event: { type?: string; errorMessage?: string }) => void): () => void;
+    onEvent(listener: (event: ModelWorkerEvent) => void): () => void;
     send(command: Record<string, unknown>): Promise<unknown>;
     shutdown(): Promise<void>;
   };
@@ -109,11 +110,7 @@ async function startStudentWorker(options: {
   let lastActivity = Date.now();
   const unsubscribe = session.onEvent((event) => {
     lastActivity = Date.now();
-    if (event.type === "prompt_error") {
-      failure = typeof event.errorMessage === "string" && event.errorMessage
-        ? event.errorMessage
-        : "LLM 连接中断";
-    }
+    failure = nextModelFailure(failure, event);
   });
   try {
     await session.send({
@@ -164,6 +161,9 @@ async function runStudentWorkers(options: {
     const { failed } = await runStudentWaves({
       items: options.students,
       groupPrefix: "marker",
+      // SDK request retries are exhausted; use the existing reconnect backoff
+      // instead of opening several identical fresh sessions during an outage.
+      shouldRetry: (error) => !isModelConnectionFailure(error),
       worker: async ({ item, groupId, agentIndex, attempt }) => {
         const worker = await startStudentWorker({
           ...options,
@@ -173,10 +173,14 @@ async function runStudentWorkers(options: {
           attempt,
         });
         try {
-          await waitForStudentWorker(worker, "Marker 单个学生批改");
-          const state = await readProcessingState(options.assignmentId);
+          await waitForStudentWorker(worker, "Marker 单个学生批改", async () => {
+            const state = await readProcessingState(options.assignmentId, item.student_id);
+            return state.students.some(student => student.student_id === item.student_id
+              && student.submission_id === item.submission_id && student.grading_complete);
+          });
+          const state = await readProcessingState(options.assignmentId, item.student_id);
           const current = state.students.find((student) => student.student_id === item.student_id);
-          if (!current?.grading_complete) {
+          if (!current?.grading_complete || current.submission_id !== item.submission_id) {
             throw new Error("Marker 已结束但该生批改尚未完成");
           }
           await setStudentProcessing({

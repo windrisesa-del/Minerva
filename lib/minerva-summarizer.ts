@@ -1,5 +1,6 @@
 import { Type } from "@earendil-works/pi-ai";
 import { defineTool, type InlineExtension } from "@earendil-works/pi-coding-agent";
+import { compactReportContext } from "./minerva-model-context";
 
 export const SUMMARIZER_SESSION_TYPE = "pi-web:minerva-summarizer";
 export type SummarizerInfo = { assignmentId: string; reportId: string; title: string };
@@ -47,7 +48,7 @@ const StudentHighlightSchema = Type.Object({
 }, { additionalProperties: false });
 
 export function buildSummarizerPrompt(reportContext: unknown): string {
-  return `请根据以下冻结的 report_context 生成本次作业报告，并调用 write_minerva 保存。\n\n<report_context>\n${JSON.stringify(reportContext)}\n</report_context>`;
+  return `请根据以下冻结的 report_context 生成本次作业报告，并调用 write_minerva 保存。evidence_sources 是按 grading_result_id 去重的完整证据来源；profile_changes 的 after.changes 保留变更节点前后值，未重复附上整份画像。\n\n<report_context>\n${JSON.stringify(compactReportContext(reportContext))}\n</report_context>`;
 }
 
 export function createSummarizerExtension(info: SummarizerInfo): InlineExtension {
@@ -65,7 +66,9 @@ export function createSummarizerExtension(info: SummarizerInfo): InlineExtension
       }, { additionalProperties: false }) }),
       async execute(_id, params) {
         const response = await fetch(`${base}/api/summary/${encodeURIComponent(info.reportId)}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ narrative: params.narrative }) });
-        return result(await response.json(), !response.ok);
+        const payload = await response.json();
+        if (!response.ok) throw new Error(typeof payload.detail === "string" ? payload.detail : `报告保存失败 HTTP ${response.status}`);
+        return result({ id: payload.id, assignment_id: payload.assignment_id, status: payload.status, source_version: payload.source_version });
       },
     }));
   } };
